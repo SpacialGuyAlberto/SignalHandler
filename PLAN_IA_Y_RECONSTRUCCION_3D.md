@@ -114,3 +114,4 @@ Evolucionar `gpr3d` desde la aproximación geométrica analítica actual (cilind
 1. **Precisión Geométrica**: La malla reconstruida por IA debe reducir el error de posición de borde en un $\ge 35\%$ comparado con el cilindro estático en presencia de codos o deformaciones.
 2. **Latencia de Inferencia**: El procesamiento de un B-scan de 2000 trazas no debe superar los 2.5 segundos en CPU estándar multinúcleo.
 3. **Resiliencia**: Si el módulo de IA no encuentra confianza suficiente ($< 50\%$), el sistema debe hacer *fallback* automático a la aproximación física canónica (cilindro analítico) sin fallar el proceso.
+
