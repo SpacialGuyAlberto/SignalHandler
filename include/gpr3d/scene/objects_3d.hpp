@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gpr3d/core/types.hpp"
+#include "gpr3d/geo/material_db.hpp"
 
 #include <array>
 #include <cmath>
@@ -47,6 +48,17 @@ struct ColorRgba {
     float g{0.8f};
     float b{0.8f};
     float a{1.0f};
+
+    [[nodiscard]] static constexpr ColorRgba from_array(
+        const std::array<float, 4>& rgba,
+        float alpha_override = -1.0f) noexcept {
+        return {
+            rgba[0],
+            rgba[1],
+            rgba[2],
+            (alpha_override >= 0.0f) ? alpha_override : rgba[3]
+        };
+    }
 };
 
 /// Semantic category of a reconstructed 3D subsurface object.
@@ -99,6 +111,7 @@ struct ConduitObject3D {
     double mean_depth_m{0.0};
     double peak_intensity{0.0};
     double confidence{0.0};
+    geo::MaterialMatch material{};
 
     std::vector<Wgs84Coord> centerline_wgs84{};
     std::vector<UtmCoord> centerline_utm{};
@@ -113,6 +126,8 @@ struct LayerHorizonObject3D {
     double mean_depth_m{0.0};
     double dip_slope_m_per_m{0.0};
     double mean_intensity{0.0};
+    double fresnel_reflection_coeff{0.0};
+    geo::MaterialMatch material{};  ///< Classified lithology of the stratum starting at this horizon
 
     std::vector<Wgs84Coord> profile_wgs84{};
     std::vector<EnuCoord> profile_enu{};
@@ -130,7 +145,61 @@ struct AnomalyObject3D {
     Vec3 radii_m{0.15, 0.15, 0.10};
     double depth_m{0.0};
     double peak_intensity{0.0};
+    geo::MaterialMatch material{};
     Mesh3D mesh{};
+};
+
+/// Fitted diffraction hyperbola velocity & dielectric estimate around a localized apex.
+struct HyperbolaFitResult {
+    bool valid{false};
+    std::size_t trace_idx{0};
+    std::size_t sample_idx{0};
+    double x0_m{0.0};
+    double t0_ns{0.0};
+    double depth_m{0.0};
+    double velocity_m_ns{0.10};     ///< Fitted EM propagation velocity v (m/ns)
+    double estimated_epsr{9.0};     ///< Relative permittivity eps_r = (c0 / v)^2
+    double semblance{0.0};          ///< Neidell-Taner coherency S(v*) in [0, 1]
+    double confidence{0.0};         ///< Prominence-weighted fit quality in [0, 1]
+};
+
+/// Frequency-dependent electromagnetic attenuation & loss parameters of a subsurface zone.
+struct AttenuationEstimate {
+    double attenuation_db_per_m{2.0};     ///< One-way attenuation alpha (dB/m)
+    double attenuation_np_per_m{0.23};    ///< One-way attenuation alpha (Np/m)
+    double loss_tangent{0.02};            ///< Dielectric loss tangent tan(delta)
+    double conductivity_ms_m{3.0};        ///< Apparent electrical conductivity sigma (mS/m)
+    double effective_freq_mhz{400.0};     ///< Measured effective spectral center frequency (MHz)
+    double centroid_shift_mhz_per_m{0.0}; ///< Quan-Harris spectral centroid downshift df_c/dz (MHz/m)
+    bool hardware_gain_detected{false};   ///< True if raw traces already had field range-gain applied
+};
+
+/// Inverted subsurface lithological layer in the vertical stratigraphic column.
+struct LithologicalLayer {
+    std::size_t layer_index{1};           ///< 1-based layer index from surface downward
+    double depth_top_m{0.0};              ///< Upper boundary depth (m)
+    double depth_bottom_m{1.0};           ///< Lower boundary depth (m)
+    double thickness_m{1.0};              ///< Layer thickness (m)
+    double reflection_coeff_top{0.0};     ///< Normal-incidence Fresnel coefficient R at top interface
+    double estimated_epsr{9.0};           ///< Inverted relative permittivity eps_r
+    double velocity_m_ns{0.10};           ///< Wave velocity in this layer (m/ns)
+    double attenuation_db_m{2.0};         ///< Estimated one-way attenuation in layer (dB/m)
+    double conductivity_ms_m{3.0};        ///< Apparent electrical conductivity sigma (mS/m)
+    double loss_tangent{0.02};            ///< Dielectric loss tangent tan(delta)
+    geo::MaterialMatch primary_material{};
+    std::vector<geo::MaterialMatch> candidates{};
+};
+
+/// Complete subsurface electromagnetic inversion & soil/material classification report.
+struct SubsurfaceMaterialReport {
+    double nominal_header_epsr{9.0};
+    double inverted_bulk_epsr{9.0};
+    double inverted_bulk_velocity_m_ns{0.10};
+    double mean_hyperbola_semblance{0.0};
+    std::vector<HyperbolaFitResult> hyperbola_fits{};
+    AttenuationEstimate bulk_attenuation{};
+    std::vector<LithologicalLayer> strata{};
+    geo::MaterialMatch dominant_soil{};
 };
 
 /// Detailed waveform & spectral fluctuation metrics for a single A-scan trace.
@@ -163,7 +232,7 @@ struct SignalFluctuationSummary {
 };
 
 /// Complete interpreted 3D subsurface scene combining semantic 3D meshes, georeferencing,
-/// underlying 3D point cloud, and signal fluctuation analytics.
+/// electromagnetic material inversion, underlying 3D point cloud, and signal fluctuation analytics.
 struct Scene3D {
     Wgs84Coord origin_wgs84{};
     UtmCoord origin_utm{};
@@ -177,6 +246,7 @@ struct Scene3D {
     PointCloud3D point_cloud{};
     BScan primary_processed_bscan{};
     SignalFluctuationSummary fluctuations{};
+    SubsurfaceMaterialReport subsurface{};
 
     [[nodiscard]] std::size_t total_objects() const noexcept {
         return conduits.size() + horizons.size() + anomalies.size();
@@ -184,4 +254,3 @@ struct Scene3D {
 };
 
 }  // namespace gpr3d::scene
-

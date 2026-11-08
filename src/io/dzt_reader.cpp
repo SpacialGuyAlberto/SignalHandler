@@ -79,6 +79,7 @@ BScan DztReader::read(const std::filesystem::path& path, const ReadOptions& opti
     const float rhf_spm = detail::read_f32_le(hdr + 14);
     const float rhf_position = detail::read_f32_le(hdr + 22);
     const float rhf_range = detail::read_f32_le(hdr + 26);
+    const std::uint16_t rh_nchan_raw = detail::read_u16_le(hdr + 52);
     const float rhf_epsr = detail::read_f32_le(hdr + 54);
 
     if (rh_nsamp == 0) {
@@ -118,16 +119,49 @@ BScan DztReader::read(const std::filesystem::path& path, const ReadOptions& opti
         (rhf_epsr > 0.5f && rhf_epsr < 100.0f) ? static_cast<double>(rhf_epsr) : 9.0);
     bscan.metadata.description = "GSSI RADAN DZT (" + ant_name + ")";
 
-    // Extract numeric MHz from antenna string if present (e.g. "400MHz")
-    std::smatch m;
-    static const std::regex re_mhz(R"(([0-9]{2,4})\s*M?H?z?)", std::regex::icase);
-    if (std::regex_search(ant_name, m, re_mhz)) {
-        bscan.metadata.antenna_freq_mhz = std::stod(m[1].str());
+    // Parse GSSI antenna model / frequency string (e.g. "400MHz", "NX15", "D50800", "5103")
+    {
+        std::string up_ant = ant_name;
+        std::transform(up_ant.begin(), up_ant.end(), up_ant.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        std::smatch m;
+        static const std::regex re_mhz(R"(([0-9]+(?:\.[0-9]+)?)\s*MHZ)", std::regex::icase);
+        static const std::regex re_ghz(R"(([0-9]+(?:\.[0-9]+)?)\s*GHZ)", std::regex::icase);
+        if (std::regex_search(ant_name, m, re_mhz)) {
+            bscan.metadata.antenna_freq_mhz = std::stod(m[1].str());
+        } else if (std::regex_search(ant_name, m, re_ghz)) {
+            bscan.metadata.antenna_freq_mhz = std::stod(m[1].str()) * 1000.0;
+        } else if (up_ant.find("NX25") != std::string::npos || up_ant.find("52600") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 2600.0;
+        } else if (up_ant.find("NX15") != std::string::npos || up_ant.find("5100") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 1600.0;
+        } else if (up_ant.find("3101") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 900.0;
+        } else if (up_ant.find("50800") != std::string::npos || up_ant.find("DF800") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 800.0;
+        } else if (up_ant.find("5103") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 400.0;
+        } else if (up_ant.find("350HS") != std::string::npos || up_ant.find("350") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 350.0;
+        } else if (up_ant.find("50300") != std::string::npos || up_ant.find("DF300") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 300.0;
+        } else if (up_ant.find("5106") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 200.0;
+        } else if (up_ant.find("3207") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 100.0;
+        }
     }
 
     const std::size_t bytes_per_sample = rh_bits / 8;
     const std::size_t trace_bytes = static_cast<std::size_t>(rh_nsamp) * bytes_per_sample;
-    const std::size_t num_traces = (file_size - data_offset) / trace_bytes;
+    const std::size_t total_raw_traces = (file_size - data_offset) / trace_bytes;
+    const std::size_t nchan =
+        (rh_nchan_raw >= 2 && rh_nchan_raw <= 8 &&
+         data_offset >= static_cast<std::size_t>(rh_nchan_raw) * kMinHeadSize &&
+         total_raw_traces >= static_cast<std::size_t>(rh_nchan_raw) * 2)
+            ? static_cast<std::size_t>(rh_nchan_raw)
+            : 1;
+    const std::size_t num_traces = total_raw_traces / nchan;
 
     bscan.traces.reserve(num_traces);
     for (std::size_t i = 0; i < num_traces; ++i) {
@@ -139,7 +173,7 @@ BScan DztReader::read(const std::filesystem::path& path, const ReadOptions& opti
         }
         tr.samples.resize(rh_nsamp);
 
-        const std::uint8_t* tptr = buf.data() + data_offset + i * trace_bytes;
+        const std::uint8_t* tptr = buf.data() + data_offset + (i * nchan) * trace_bytes;
         for (std::uint16_t j = 0; j < rh_nsamp; ++j) {
             const std::uint8_t* p = tptr + static_cast<std::size_t>(j) * bytes_per_sample;
             if (rh_bits == 8) {
@@ -150,6 +184,19 @@ BScan DztReader::read(const std::filesystem::path& path, const ReadOptions& opti
                 tr.samples[j] = static_cast<double>(detail::read_i32_le(p));
             }
         }
+
+        // GSSI SIR-20 / SIR-3000 stores scan counter in sample[0] and marker flags (e.g. 0xE4000000) in sample[1]
+        if (rh_nsamp >= 16) {
+            double max_early_wave = 1.0;
+            for (std::uint16_t j = 2; j < 16; ++j) {
+                max_early_wave = std::max(max_early_wave, std::abs(tr.samples[j]));
+            }
+            if (std::abs(tr.samples[1]) > 15.0 * max_early_wave) {
+                tr.samples[0] = tr.samples[2];
+                tr.samples[1] = tr.samples[2];
+            }
+        }
+
         bscan.traces.push_back(std::move(tr));
     }
 

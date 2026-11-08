@@ -3,6 +3,7 @@
 #include "gpr3d/core/types.hpp"
 #include "gpr3d/dsp/interpreter.hpp"
 #include "gpr3d/dsp/signal_processor.hpp"
+#include "gpr3d/dsp/soil_inversion.hpp"
 #include "gpr3d/scene/objects_3d.hpp"
 
 #include <span>
@@ -14,6 +15,9 @@ struct ObjectTransformConfig {
     double migration_aperture_m{1.5};            ///< Kirchhoff aperture (m) for focusing conduit hyperbolas
     double min_depth_m{0.10};                    ///< Minimum subsurface depth (m) for object extraction
     double max_depth_m{5.00};                    ///< Maximum subsurface depth (m)
+
+    bool enable_material_inversion{true};        ///< Invert velocity/permittivity, Fresnel strata & ASTM materials
+    bool auto_geological_colors{true};           ///< Assign representative geological/material PBR colors to 3D meshes
 
     bool extract_horizons{true};                 ///< Track continuous stratigraphic layers
     double horizon_min_coverage{0.65};           ///< Minimum fraction of traces where horizon is coherent

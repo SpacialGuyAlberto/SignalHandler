@@ -719,9 +719,25 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
             ColorRgba{0.35f, 0.42f, 0.46f, 0.35f});
     }
 
-    // Dual-branch processing:
-    // 1) Stratigraphic branch (preserves flat/dipping horizons)
-    // 2) Target branch (background removal + Kirchhoff migration to focus conduits & anomalies)
+    // Dual-branch processing + Subsurface Dielectric & Material Inversion:
+    // 1) Clean un-gained primary line for true physical attenuation & Fresnel reflectance inversion
+    // 2) Stratigraphic branch (preserves flat/dipping horizons)
+    // 3) Target branch (background removal + Kirchhoff migration to focus conduits & anomalies)
+    BScan primary_no_gain = base_lines.front();
+    if (cfg.preprocess_signals) {
+        ProcessingConfig ng_cfg{};
+        ng_cfg.enable_dewow = true;
+        ng_cfg.enable_time_zero = true;
+        ng_cfg.enable_bandpass = true;
+        ng_cfg.enable_background_removal = false;
+        ng_cfg.enable_sec_gain = false;
+        ng_cfg.enable_migration = false;
+        ng_cfg.compute_envelope = true;
+        SignalProcessor::process(primary_no_gain, ng_cfg);
+    } else if (primary_no_gain.traces.front().envelope.empty()) {
+        SignalProcessor::compute_envelopes(primary_no_gain);
+    }
+
     std::vector<BScan> strat_lines = base_lines;
     std::vector<BScan> target_lines = base_lines;
     std::vector<std::vector<TrackedHorizon1D>> per_line_horizons(n_lines);
@@ -762,6 +778,16 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
             tgt_cfg.compute_envelope = false;
             SignalProcessor::process(target_lines[l], tgt_cfg);
 
+            // On primary line, run Semblance Hyperbola Velocity Analysis BEFORE Kirchhoff migration!
+            if (l == 0 && cfg.enable_material_inversion) {
+                BScan unmig_probe = primary_no_gain;
+                SignalProcessor::remove_background(unmig_probe, 0);
+                SignalProcessor::apply_sec_gain(unmig_probe, 0.04, 0.015, 8.0);
+                SignalProcessor::compute_envelopes(unmig_probe);
+                scene.subsurface.hyperbola_fits = SoilInverter::scan_and_fit_hyperbolas(
+                    unmig_probe, std::max(0.06, cfg.min_depth_m * 0.7), cfg.max_depth_m);
+            }
+
             // Attenuate narrow residual bands around tracked dipping horizons so pipes stand out cleanly
             const double dt = target_lines[l].metadata.sample_interval_ns;
             const double eps_r = std::max(1.0, target_lines[l].metadata.relative_permittivity);
@@ -789,6 +815,82 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
             SignalProcessor::compute_envelopes(target_lines[l]);
         }
     }
+
+    // Complete Subsurface Dielectric, Attenuation & Multilayer Fresnel Material Inversion
+    scene.subsurface.nominal_header_epsr =
+        std::max(1.0, base_lines.front().metadata.relative_permittivity);
+    if (cfg.enable_material_inversion) {
+        double sum_w = 0.65;
+        double sum_eps = 0.65 * scene.subsurface.nominal_header_epsr;
+        double sum_semb = 0.0;
+        for (const auto& f : scene.subsurface.hyperbola_fits) {
+            sum_w += f.confidence;
+            sum_eps += f.confidence * f.estimated_epsr;
+            sum_semb += f.semblance;
+        }
+        scene.subsurface.inverted_bulk_epsr = std::clamp(sum_eps / sum_w, 1.5, 45.0);
+        scene.subsurface.inverted_bulk_velocity_m_ns =
+            kSpeedOfLightMPerNs / std::sqrt(scene.subsurface.inverted_bulk_epsr);
+        scene.subsurface.mean_hyperbola_semblance =
+            scene.subsurface.hyperbola_fits.empty()
+                ? 0.0
+                : (sum_semb / static_cast<double>(scene.subsurface.hyperbola_fits.size()));
+
+        const double nom_v_m_ns = kSpeedOfLightMPerNs / std::sqrt(scene.subsurface.nominal_header_epsr);
+        const double max_win_d =
+            0.5 * nom_v_m_ns *
+            static_cast<double>(primary_no_gain.num_samples()) *
+            primary_no_gain.metadata.sample_interval_ns;
+        const double eff_max_d = std::min(cfg.max_depth_m, std::max(0.30, max_win_d));
+
+        scene.subsurface.bulk_attenuation = SoilInverter::estimate_trace_attenuation(
+            primary_no_gain, scene.subsurface.inverted_bulk_epsr, cfg.min_depth_m, eff_max_d);
+
+        std::vector<HorizonBoundaryInput> hz_inputs;
+        hz_inputs.reserve(per_line_horizons.front().size());
+        for (const auto& h : per_line_horizons.front()) {
+            hz_inputs.push_back(HorizonBoundaryInput{
+                .sample_indices = h.sample_indices,
+                .mean_depth_m = h.mean_depth_m
+            });
+        }
+
+        scene.subsurface.strata = SoilInverter::invert_stratigraphic_layers(
+            primary_no_gain,
+            hz_inputs,
+            scene.subsurface.inverted_bulk_epsr,
+            scene.subsurface.bulk_attenuation,
+            eff_max_d);
+
+        if (!scene.subsurface.strata.empty()) {
+            const auto dom_it = std::max_element(
+                scene.subsurface.strata.begin(), scene.subsurface.strata.end(),
+                [](const scene::LithologicalLayer& a, const scene::LithologicalLayer& b) {
+                    return a.thickness_m < b.thickness_m;
+                });
+            scene.subsurface.dominant_soil = dom_it->primary_material;
+
+            // Adapt 3D Ground Surface mesh color to top pavement/soil layer lithology
+            if (cfg.auto_geological_colors && !scene.ground_surface.empty()) {
+                const auto& top_mat = scene.subsurface.strata.front().primary_material;
+                scene.ground_surface.color = ColorRgba::from_array(top_mat.color_rgba, 0.42f);
+                scene.ground_surface.metallic = top_mat.pbr_metallic;
+                scene.ground_surface.roughness = top_mat.pbr_roughness;
+            }
+        }
+    }
+
+    auto lookup_host_layer = [&](double depth_m) -> std::pair<double, double> {
+        for (const auto& st : scene.subsurface.strata) {
+            if (depth_m >= st.depth_top_m && depth_m <= st.depth_bottom_m) {
+                return {st.estimated_epsr, st.attenuation_db_m};
+            }
+        }
+        return {
+            scene.subsurface.inverted_bulk_epsr,
+            scene.subsurface.bulk_attenuation.attenuation_db_per_m
+        };
+    };
 
     // Reconstruct 3D Stratigraphic Horizon Objects
     if (cfg.extract_horizons && !per_line_horizons.front().empty()) {
@@ -835,10 +937,28 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
             }
 
             const std::size_t obj_id = scene.horizons.size() + 1;
-            const std::string name = "Stratum_Horizon_0" + std::to_string(obj_id);
-            const ColorRgba color = (obj_id % 2 == 1)
-                                        ? ColorRgba{0.82f, 0.64f, 0.28f, 0.62f}
-                                        : ColorRgba{0.35f, 0.68f, 0.78f, 0.62f};
+
+            // Match horizon k with underlying lithological layer (index h_idx + 1)
+            geo::MaterialMatch hz_mat{};
+            double fresnel_r = 0.0;
+            if (h_idx + 1 < scene.subsurface.strata.size()) {
+                hz_mat = scene.subsurface.strata[h_idx + 1].primary_material;
+                fresnel_r = scene.subsurface.strata[h_idx + 1].reflection_coeff_top;
+            } else if (!scene.subsurface.strata.empty()) {
+                hz_mat = scene.subsurface.strata.back().primary_material;
+                fresnel_r = scene.subsurface.strata.back().reflection_coeff_top;
+            }
+
+            const std::string name =
+                "Estrato_0" + std::to_string(obj_id) + "_" +
+                (!hz_mat.code.empty() ? hz_mat.code : "soil");
+
+            const ColorRgba color =
+                (cfg.auto_geological_colors && hz_mat.kind != geo::MaterialKind::Unknown)
+                    ? ColorRgba::from_array(hz_mat.color_rgba, 0.68f)
+                    : ((obj_id % 2 == 1)
+                           ? ColorRgba{0.82f, 0.64f, 0.28f, 0.62f}
+                           : ColorRgba{0.35f, 0.68f, 0.78f, 0.62f});
 
             scene::LayerHorizonObject3D layer_obj{};
             layer_obj.id = obj_id;
@@ -846,6 +966,8 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
             layer_obj.mean_depth_m = ref_hz.mean_depth_m;
             layer_obj.dip_slope_m_per_m = ref_hz.slope_m_per_m;
             layer_obj.mean_intensity = ref_hz.mean_norm_intensity;
+            layer_obj.fresnel_reflection_coeff = fresnel_r;
+            layer_obj.material = hz_mat;
             layer_obj.profile_wgs84 = std::move(ref_wgs_prof);
             layer_obj.profile_enu = std::move(ref_enu_prof);
             layer_obj.mesh = build_surface_from_profiles(
@@ -855,6 +977,10 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                 cfg.single_line_half_length_m,
                 strat_lines.front().traces.front().heading_deg,
                 color);
+            if (cfg.auto_geological_colors && hz_mat.kind != geo::MaterialKind::Unknown) {
+                layer_obj.mesh.metallic = hz_mat.pbr_metallic;
+                layer_obj.mesh.roughness = hz_mat.pbr_roughness;
+            }
 
             if (!layer_obj.mesh.empty()) {
                 scene.horizons.push_back(std::move(layer_obj));
@@ -1016,10 +1142,6 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                         scene::ConduitObject3D cond{};
                         cond.id = scene.conduits.size() + 1;
                         cond.polarity = chain.front()->polarity;
-                        cond.label = "Conduit_0" + std::to_string(cond.id) + "_" +
-                                     (cond.polarity == PolarityKind::MetallicOrHighPermittivity
-                                          ? "Metallic"
-                                          : "FiberDuct");
 
                         double sum_r = 0.0, sum_d = 0.0, max_i = 0.0;
                         for (const auto* node : chain) {
@@ -1038,10 +1160,19 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                             0.55 + 0.45 * (static_cast<double>(chain.size()) / static_cast<double>(n_lines)),
                             0.0, 1.0);
 
-                        const ColorRgba col =
-                            (cond.polarity == PolarityKind::MetallicOrHighPermittivity)
-                                ? ColorRgba{0.94f, 0.26f, 0.22f, 1.0f}   // Crimson red = metallic/power/water
-                                : ColorRgba{0.12f, 0.82f, 0.54f, 1.0f};  // Emerald cyan = HDPE fiber duct
+                        const auto [h_eps, h_att] = lookup_host_layer(cond.mean_depth_m);
+                        cond.material = geo::MaterialDatabase::classify_conduit(
+                            cond.polarity == PolarityKind::MetallicOrHighPermittivity,
+                            cond.peak_intensity,
+                            h_eps,
+                            h_att);
+                        cond.label = "Conducto_0" + std::to_string(cond.id) + "_" + cond.material.code;
+
+                        const ColorRgba col = cfg.auto_geological_colors
+                                                  ? ColorRgba::from_array(cond.material.color_rgba, 1.0f)
+                                                  : ((cond.polarity == PolarityKind::MetallicOrHighPermittivity)
+                                                         ? ColorRgba{0.94f, 0.26f, 0.22f, 1.0f}
+                                                         : ColorRgba{0.12f, 0.82f, 0.54f, 1.0f});
 
                         cond.mesh = build_tube_mesh(
                             cond.label,
@@ -1049,8 +1180,8 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                             cond.estimated_radius_m,
                             cfg.tube_radial_segments,
                             col,
-                            cond.polarity == PolarityKind::MetallicOrHighPermittivity ? 0.75f : 0.15f,
-                            0.35f);
+                            cond.material.pbr_metallic,
+                            cond.material.pbr_roughness);
                         scene.conduits.push_back(std::move(cond));
                     } else {
                         // Release unlinked single node so anomaly stage can capture it
@@ -1077,14 +1208,18 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                 scene::ConduitObject3D cond{};
                 cond.id = scene.conduits.size() + 1;
                 cond.polarity = apex.polarity;
-                cond.label = "Conduit_0" + std::to_string(cond.id) + "_" +
-                             (cond.polarity == PolarityKind::MetallicOrHighPermittivity
-                                  ? "Metallic"
-                                  : "FiberDuct");
                 cond.estimated_radius_m = apex.est_radius_m;
                 cond.mean_depth_m = apex.depth_m;
                 cond.peak_intensity = apex.norm_intensity;
                 cond.confidence = std::clamp(apex.norm_intensity, 0.0, 1.0);
+
+                const auto [h_eps, h_att] = lookup_host_layer(cond.mean_depth_m);
+                cond.material = geo::MaterialDatabase::classify_conduit(
+                    cond.polarity == PolarityKind::MetallicOrHighPermittivity,
+                    cond.peak_intensity,
+                    h_eps,
+                    h_att);
+                cond.label = "Conducto_0" + std::to_string(cond.id) + "_" + cond.material.code;
 
                 cond.centerline_enu = {p0, p1, p2};
                 for (const auto& ep : cond.centerline_enu) {
@@ -1093,10 +1228,11 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                     cond.centerline_utm.push_back(geo::wgs84_to_utm(wp, scene.origin_utm.zone));
                 }
 
-                const ColorRgba col =
-                    (cond.polarity == PolarityKind::MetallicOrHighPermittivity)
-                        ? ColorRgba{0.94f, 0.26f, 0.22f, 1.0f}
-                        : ColorRgba{0.12f, 0.82f, 0.54f, 1.0f};
+                const ColorRgba col = cfg.auto_geological_colors
+                                          ? ColorRgba::from_array(cond.material.color_rgba, 1.0f)
+                                          : ((cond.polarity == PolarityKind::MetallicOrHighPermittivity)
+                                                 ? ColorRgba{0.94f, 0.26f, 0.22f, 1.0f}
+                                                 : ColorRgba{0.12f, 0.82f, 0.54f, 1.0f});
 
                 cond.mesh = build_tube_mesh(
                     cond.label,
@@ -1104,8 +1240,8 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                     cond.estimated_radius_m,
                     cfg.tube_radial_segments,
                     col,
-                    cond.polarity == PolarityKind::MetallicOrHighPermittivity ? 0.75f : 0.15f,
-                    0.35f);
+                    cond.material.pbr_metallic,
+                    cond.material.pbr_roughness);
                 scene.conduits.push_back(std::move(cond));
             }
         }
@@ -1122,7 +1258,6 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
 
                 scene::AnomalyObject3D anom{};
                 anom.id = scene.anomalies.size() + 1;
-                anom.label = "Anomaly_0" + std::to_string(anom.id);
                 anom.polarity = apex.polarity;
                 anom.center_wgs84 = apex.wgs84;
                 anom.center_utm = geo::wgs84_to_utm(apex.wgs84, scene.origin_utm.zone);
@@ -1134,13 +1269,28 @@ scene::Scene3D SignalObjectTransformer::transform_grid(
                 };
                 anom.depth_m = apex.depth_m;
                 anom.peak_intensity = apex.norm_intensity;
+
+                const auto [h_eps, h_att] = lookup_host_layer(anom.depth_m);
+                anom.material = geo::MaterialDatabase::classify_anomaly(
+                    anom.polarity == PolarityKind::MetallicOrHighPermittivity,
+                    anom.peak_intensity,
+                    h_eps,
+                    anom.depth_m,
+                    h_att);
+                anom.label = "Anomalia_0" + std::to_string(anom.id) + "_" + anom.material.code;
+
+                const ColorRgba acol = cfg.auto_geological_colors
+                                           ? ColorRgba::from_array(anom.material.color_rgba, 0.90f)
+                                           : ColorRgba{0.96f, 0.56f, 0.12f, 0.90f};
                 anom.mesh = build_ellipsoid_mesh(
                     anom.label,
                     anom.center_enu,
                     anom.radii_m,
                     10,
                     16,
-                    ColorRgba{0.96f, 0.56f, 0.12f, 0.90f});
+                    acol);
+                anom.mesh.metallic = anom.material.pbr_metallic;
+                anom.mesh.roughness = anom.material.pbr_roughness;
 
                 scene.anomalies.push_back(std::move(anom));
             }

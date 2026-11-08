@@ -4,7 +4,9 @@
 #include "gpr3d/dsp/interpreter.hpp"
 #include "gpr3d/dsp/object_transformer.hpp"
 #include "gpr3d/dsp/signal_processor.hpp"
+#include "gpr3d/dsp/soil_inversion.hpp"
 #include "gpr3d/geo/crs_transform.hpp"
+#include "gpr3d/geo/material_db.hpp"
 #include "gpr3d/geo/trajectory_sync.hpp"
 #include "gpr3d/io/dzt_reader.hpp"
 #include "gpr3d/io/exporter_3d.hpp"
@@ -323,12 +325,16 @@ void test_3d_objects_and_graphical_fluctuations() {
     CHECK(!scene.conduits.empty());
     CHECK(!scene.horizons.empty());
 
-    // Verify reconstructed 3D conduit meshes and georeferenced centerlines
+    // Verify reconstructed 3D conduit meshes, georeferenced centerlines, and material classification
+    CHECK(!scene.subsurface.strata.empty());
+    CHECK(scene.subsurface.dominant_soil.probability > 0.15);
     for (const auto& cond : scene.conduits) {
         CHECK(!cond.mesh.empty());
         CHECK(cond.centerline_wgs84.size() >= 2);
         CHECK(cond.centerline_utm.size() == cond.centerline_wgs84.size());
         CHECK(cond.mean_depth_m > 0.20 && cond.mean_depth_m < 1.80);
+        CHECK(cond.material.kind != gpr3d::geo::MaterialKind::Unknown);
+        CHECK(cond.material.probability > 0.40);
     }
 
     // Verify signal fluctuation analytics
@@ -363,15 +369,27 @@ void test_3d_objects_and_graphical_fluctuations() {
         CHECK(gpr3d::detail::read_u32_le(hdr + 8) == static_cast<std::uint32_t>(fsize));
     }
 
-    // 3. 3D GeoJSON
+    // 3. 3D GeoJSON (verify subsurface_inversion & stratigraphic_column JSON blocks)
     const auto geojson_path = tmp_dir / "scene.geojson";
     gpr3d::io::SceneExporter3D::write_geojson(geojson_path, scene);
     CHECK(std::filesystem::exists(geojson_path) && std::filesystem::file_size(geojson_path) > 300);
+    {
+        std::ifstream gj_in(geojson_path);
+        const std::string gj_text((std::istreambuf_iterator<char>(gj_in)), std::istreambuf_iterator<char>());
+        CHECK(gj_text.find("\"subsurface_inversion\"") != std::string::npos);
+        CHECK(gj_text.find("\"stratigraphic_column\"") != std::string::npos);
+        CHECK(gj_text.find("\"material_es\"") != std::string::npos);
+    }
 
-    // 4. Interactive HTML5 3D + Signal Fluctuation Dashboard
+    // 4. Interactive HTML5 3D + Signal Fluctuation + Lithology Dashboard
     const auto html_path = tmp_dir / "dashboard.html";
     gpr3d::viz::FluctuationPlotter::write_html_dashboard(html_path, scene);
     CHECK(std::filesystem::exists(html_path) && std::filesystem::file_size(html_path) > 4000);
+    {
+        std::ifstream html_in(html_path);
+        const std::string html_text((std::istreambuf_iterator<char>(html_in)), std::istreambuf_iterator<char>());
+        CHECK(html_text.find("Estratigraf") != std::string::npos);
+    }
 
 #ifdef GPR3D_USE_CAIRO
     // 5. Cairo PNG & Vector SVG 4-panel Fluctuation Charts
@@ -392,6 +410,131 @@ void test_3d_objects_and_graphical_fluctuations() {
     std::filesystem::remove_all(tmp_dir);
 }
 
+void test_soil_inversion_and_material_classification() {
+    std::cout << "[TEST] Geophysical Soil Inversion (Semblance Velocity, Fresnel Layers, Attenuation) & ASTM Material DB ...\n";
+
+    // 1. Exact Fresnel normal-incidence inversion check:
+    // eps_1 = 4 (sqrt=2), eps_2 = 16 (sqrt=4) => R = (2 - 4) / (2 + 4) = -1/3
+    CHECK_NEAR(gpr3d::dsp::SoilInverter::invert_fresnel_permittivity(4.0, -1.0 / 3.0), 16.0, 1e-9);
+    // Reverse interface: eps_1 = 16 (sqrt=4), eps_2 = 4 (sqrt=2) => R = (4 - 2) / (4 + 2) = +1/3
+    CHECK_NEAR(gpr3d::dsp::SoilInverter::invert_fresnel_permittivity(16.0, +1.0 / 3.0), 4.0, 1e-9);
+
+    // 2. ASTM / GPR MaterialDatabase Bayesian classification checks
+    const auto asphalt = gpr3d::geo::MaterialDatabase::classify_soil_layer(4.0, 0.5, 0.8, 0.008, 0.0);
+    CHECK(asphalt.kind == gpr3d::geo::MaterialKind::Asphalt_Dry);
+    CHECK(asphalt.probability > 0.35);
+    CHECK(asphalt.color_hex().size() == 7 && asphalt.color_hex()[0] == '#');
+
+    const auto gravel = gpr3d::geo::MaterialDatabase::classify_soil_layer(5.0, 1.2, 1.4, 0.015, 0.22);
+    CHECK(gravel.kind == gpr3d::geo::MaterialKind::Gravel_Dry ||
+          gravel.kind == gpr3d::geo::MaterialKind::Sand_Dry);
+
+    const auto wet_clay = gpr3d::geo::MaterialDatabase::classify_soil_layer(24.0, 95.0, 28.0, 0.25, 0.90);
+    CHECK(wet_clay.kind == gpr3d::geo::MaterialKind::Clay_Wet);
+    CHECK(wet_clay.probability > 0.50);
+
+    const auto water = gpr3d::geo::MaterialDatabase::classify_soil_layer(80.0, 20.0, 5.0, 0.05, 1.50);
+    CHECK(water.kind == gpr3d::geo::MaterialKind::Water_Fresh);
+
+    const auto metal_pipe = gpr3d::geo::MaterialDatabase::classify_conduit(true, 0.92, 8.0, 3.0);
+    CHECK(metal_pipe.kind == gpr3d::geo::MaterialKind::Conduit_Metallic);
+    CHECK(metal_pipe.probability > 0.60);
+
+    const auto pvc_duct = gpr3d::geo::MaterialDatabase::classify_conduit(false, 0.80, 8.0, 2.5);
+    CHECK(pvc_duct.kind == gpr3d::geo::MaterialKind::Conduit_Polymer_PVC_PE);
+    CHECK(pvc_duct.probability > 0.60);
+
+    // 3. Header-independent Hyperbola Semblance Velocity Fitting across two distinct permittivities
+    auto run_velocity_recovery = [](double true_epsr) -> gpr3d::scene::HyperbolaFitResult {
+        gpr3d::sim::SyntheticSurveyConfig cfg{};
+        cfg.num_traces = 151;
+        cfg.trace_spacing_m = 0.03;  // 4.5 m line
+        cfg.samples_per_trace = 512;
+        cfg.sample_interval_ns = 0.05;
+        cfg.relative_permittivity = true_epsr;
+        cfg.time_zero_ns = 2.5;
+        cfg.include_direct_wave = true;
+        cfg.include_wow_drift = false;
+        cfg.attenuation_np_per_ns = 0.01;
+        cfg.noise_std = 0.002;
+        cfg.azimuth_deg = 90.0;
+        cfg.curvature_deg_per_m = 0.0;
+        cfg.horizons.clear();
+        cfg.targets = {
+            {.position_along_track_m = 2.25, .depth_m = 0.75, .radius_m = 0.0, .reflectivity = -1.0}
+        };
+
+        auto bscan = gpr3d::sim::SyntheticGenerator::generate_bscan(cfg);
+        // Intentionally corrupt header eps_r to prove velocity comes from hyperbola geometry!
+        bscan.metadata.relative_permittivity = 14.0;
+
+        gpr3d::dsp::ProcessingConfig pcfg{};
+        pcfg.enable_dewow = true;
+        pcfg.enable_time_zero = true;
+        pcfg.fixed_time_zero_ns = cfg.time_zero_ns;
+        pcfg.enable_bandpass = true;
+        pcfg.enable_background_removal = true;
+        pcfg.enable_sec_gain = false;
+        pcfg.enable_migration = false;
+        pcfg.compute_envelope = true;
+        gpr3d::dsp::SignalProcessor::process(bscan, pcfg);
+
+        const auto fits = gpr3d::dsp::SoilInverter::scan_and_fit_hyperbolas(bscan, 0.20, 2.00);
+        CHECK(!fits.empty());
+        return fits.empty() ? gpr3d::scene::HyperbolaFitResult{} : fits.front();
+    };
+
+    const auto fit_eps5 = run_velocity_recovery(5.0);
+    CHECK(fit_eps5.valid);
+    CHECK(fit_eps5.semblance > 0.45);
+    CHECK_NEAR(fit_eps5.estimated_epsr, 5.0, 1.2);
+
+    const auto fit_eps9 = run_velocity_recovery(9.0);
+    CHECK(fit_eps9.valid);
+    CHECK(fit_eps9.semblance > 0.45);
+    CHECK_NEAR(fit_eps9.estimated_epsr, 9.0, 1.5);
+    CHECK(fit_eps5.velocity_m_ns > fit_eps9.velocity_m_ns);
+
+    // 4. Frequency-dependent attenuation & conductivity discrimination (low-loss sand vs high-loss clay)
+    auto make_loss_bscan = [](double atten_np_per_ns, double epsr) {
+        gpr3d::sim::SyntheticSurveyConfig cfg{};
+        cfg.num_traces = 80;
+        cfg.samples_per_trace = 512;
+        cfg.sample_interval_ns = 0.06;
+        cfg.relative_permittivity = epsr;
+        cfg.attenuation_np_per_ns = atten_np_per_ns;
+        cfg.noise_std = 0.004;
+        auto b = gpr3d::sim::SyntheticGenerator::generate_bscan(cfg);
+
+        gpr3d::dsp::ProcessingConfig pcfg{};
+        pcfg.enable_dewow = true;
+        pcfg.enable_time_zero = true;
+        pcfg.fixed_time_zero_ns = cfg.time_zero_ns;
+        pcfg.enable_bandpass = true;
+        pcfg.enable_background_removal = false;
+        pcfg.enable_sec_gain = false;
+        pcfg.enable_migration = false;
+        pcfg.compute_envelope = true;
+        gpr3d::dsp::SignalProcessor::process(b, pcfg);
+        return b;
+    };
+
+    const auto low_loss_bscan = make_loss_bscan(0.008, 5.0);
+    const auto high_loss_bscan = make_loss_bscan(0.110, 18.0);
+    const auto att_low = gpr3d::dsp::SoilInverter::estimate_trace_attenuation(low_loss_bscan, 5.0);
+    const auto att_high = gpr3d::dsp::SoilInverter::estimate_trace_attenuation(high_loss_bscan, 18.0);
+    CHECK(att_high.attenuation_db_per_m > att_low.attenuation_db_per_m);
+    CHECK(att_high.conductivity_ms_m > att_low.conductivity_ms_m);
+
+    // 5. Full standalone subsurface diagnostic (`analyze_subsurface`)
+    gpr3d::sim::SyntheticSurveyConfig full_cfg{};
+    const auto raw = gpr3d::sim::SyntheticGenerator::generate_bscan(full_cfg);
+    const auto rep = gpr3d::dsp::SoilInverter::analyze_subsurface(raw);
+    CHECK(!rep.strata.empty());
+    CHECK(rep.inverted_bulk_epsr >= 2.0 && rep.inverted_bulk_epsr <= 30.0);
+    CHECK(rep.dominant_soil.kind != gpr3d::geo::MaterialKind::Unknown);
+}
+
 }  // namespace
 
 int main() {
@@ -400,6 +543,7 @@ int main() {
     test_fft_and_hilbert();
     test_radar_io_roundtrips();
     test_end_to_end_3d_conduit_localization();
+    test_soil_inversion_and_material_classification();
     test_3d_objects_and_graphical_fluctuations();
 
     if (g_failures == 0) {

@@ -2,7 +2,9 @@
 #include "gpr3d/dsp/interpreter.hpp"
 #include "gpr3d/dsp/object_transformer.hpp"
 #include "gpr3d/dsp/signal_processor.hpp"
+#include "gpr3d/dsp/soil_inversion.hpp"
 #include "gpr3d/geo/crs_transform.hpp"
+#include "gpr3d/geo/material_db.hpp"
 #include "gpr3d/geo/trajectory_sync.hpp"
 #include "gpr3d/io/dzt_reader.hpp"
 #include "gpr3d/io/exporter_3d.hpp"
@@ -41,10 +43,10 @@ Usage:
 
 Subcommands:
   simulate    Generate realistic synthetic GPR B-scans (.sgy, .dzt, .rd3) with buried conduits & GPS
-  inspect     Display header metadata, dielectric depth window, and WGS84/UTM trajectory bounds
+  inspect     Display header metadata, dielectric/lithological soil inversion, and WGS84/UTM bounds
   process     Filter/migrate GPR traces and export georeferenced 3D point clouds (.ply, .csv, .xyz)
-  transform   Interpret GPR signals into 3D semantic objects (.obj, .glb, .geojson) & graphical
-              signal fluctuations (.png, .svg, interactive 3D/2D .html, plus .ply/.csv)
+  transform   Interpret GPR signals into 3D semantic objects & soil materials (.obj, .glb, .geojson)
+              and graphical signal fluctuations (.png, .svg, interactive 3D/2D .html, plus .ply/.csv)
   view        Launch native C++ OpenGL/GLFW interactive 3D object & live waveform fluctuation viewer
 
 Options for 'transform' and 'view':
@@ -59,6 +61,8 @@ Options for 'transform' and 'view':
   --horizon-thresh <0..1>   Relative threshold for continuous stratigraphic layers [default: 0.20]
   --anomaly-thresh <0..1>   Threshold for localized 3D anomaly volumes [default: 0.32]
   --aperture <m>            2D Kirchhoff migration aperture in meters [default: 1.5]
+  --no-material-inversion   Disable automatic velocity/Fresnel soil & material inversion
+  --no-geo-colors           Keep legacy fixed colors instead of geological/material PBR colors
   --frame <enu|utm>         Coordinate frame for .obj/.ply/.xyz [default: enu for .obj, utm for .ply]
   --origin <lat,lon,alt>    Fallback WGS84 origin when radar file has no GPS
 
@@ -292,6 +296,36 @@ int cmd_inspect(int argc, char** argv) {
                   << "End UTM   (E, N)   : (" << u1.easting_m << ", " << u1.northing_m << " m)\n"
                   << "Track Length       : " << bscan.traces.back().distance_along_track_m << " m\n";
     }
+
+    const auto inv = gpr3d::dsp::SoilInverter::analyze_subsurface(bscan);
+    std::cout << "\n=== Estimación Litológica y Dieléctrica del Subsuelo ===\n"
+              << std::fixed << std::setprecision(2)
+              << "Permitividad Invertida : eps_r = " << inv.inverted_bulk_epsr
+              << " (v = " << std::setprecision(3) << inv.inverted_bulk_velocity_m_ns
+              << " m/ns | Cabecera: " << std::setprecision(2) << inv.nominal_header_epsr
+              << " | Hipérbolas ajustadas: " << inv.hyperbola_fits.size()
+              << ", Semblance: " << std::setprecision(2) << inv.mean_hyperbola_semblance << ")\n"
+              << "Atenuación y Pérdidas  : alfa = " << inv.bulk_attenuation.attenuation_db_per_m
+              << " dB/m | sigma = " << inv.bulk_attenuation.conductivity_ms_m
+              << " mS/m | tan(delta) = " << std::setprecision(3) << inv.bulk_attenuation.loss_tangent
+              << " (f_eff = " << std::setprecision(1) << inv.bulk_attenuation.effective_freq_mhz << " MHz)\n"
+              << "Suelo Dominante        : " << inv.dominant_soil.name_es << " / " << inv.dominant_soil.name_en
+              << " (Confianza: " << std::setprecision(1) << (inv.dominant_soil.probability * 100.0) << "%)\n";
+
+    if (!inv.strata.empty()) {
+        std::cout << "Columna Estratigráfica :\n";
+        for (const auto& st : inv.strata) {
+            std::cout << "  - Capa #" << st.layer_index << " ["
+                      << std::setprecision(2) << st.depth_top_m << " - " << st.depth_bottom_m << " m]: "
+                      << st.primary_material.name_es
+                      << " (" << std::setprecision(1) << (st.primary_material.probability * 100.0) << "%)"
+                      << " | eps_r = " << std::setprecision(2) << st.estimated_epsr
+                      << " | v = " << std::setprecision(3) << st.velocity_m_ns << " m/ns"
+                      << " | R_top = " << std::showpos << std::setprecision(3) << st.reflection_coeff_top
+                      << std::noshowpos
+                      << " | sigma = " << std::setprecision(1) << st.conductivity_ms_m << " mS/m\n";
+        }
+    }
     return 0;
 }
 
@@ -419,6 +453,10 @@ int cmd_transform_or_view(int argc, char** argv, bool launch_viewer) {
             tf_cfg.min_depth_m = std::stod(next_val());
         } else if (arg == "--max-depth") {
             tf_cfg.max_depth_m = std::stod(next_val());
+        } else if (arg == "--no-material-inversion") {
+            tf_cfg.enable_material_inversion = false;
+        } else if (arg == "--no-geo-colors") {
+            tf_cfg.auto_geological_colors = false;
         } else if (arg == "--frame") {
             const std::string f = lower_str(next_val());
             const auto frame = (f == "utm") ? gpr3d::io::CoordFrame3D::UTM
@@ -466,6 +504,30 @@ int cmd_transform_or_view(int argc, char** argv, bool launch_viewer) {
               << "  - Stratigraphic Horizons       : " << scene.horizons.size() << "\n"
               << "  - Localized 3D Anomalies       : " << scene.anomalies.size() << "\n"
               << "  - 3D Point Cloud Reflections   : " << scene.point_cloud.size() << "\n";
+
+    if (!scene.subsurface.strata.empty()) {
+        const auto& sub = scene.subsurface;
+        std::cout << std::fixed << std::setprecision(2)
+                  << "[transform] Subsurface Soil & Material Inversion:\n"
+                  << "  - Dominant Soil : " << sub.dominant_soil.name_es
+                  << " (" << std::setprecision(1) << (sub.dominant_soil.probability * 100.0) << "%)"
+                  << " | eps_r = " << std::setprecision(2) << sub.inverted_bulk_epsr
+                  << " | v = " << std::setprecision(3) << sub.inverted_bulk_velocity_m_ns << " m/ns"
+                  << " | alfa = " << std::setprecision(2) << sub.bulk_attenuation.attenuation_db_per_m << " dB/m"
+                  << " | sigma = " << std::setprecision(1) << sub.bulk_attenuation.conductivity_ms_m << " mS/m\n";
+        for (const auto& st : sub.strata) {
+            std::cout << "  - Estrato #" << st.layer_index << " ["
+                      << std::setprecision(2) << st.depth_top_m << " - " << st.depth_bottom_m << " m]: "
+                      << st.primary_material.name_es
+                      << " (" << std::setprecision(1) << (st.primary_material.probability * 100.0) << "%, eps_r="
+                      << std::setprecision(2) << st.estimated_epsr << ")\n";
+        }
+        for (const auto& cond : scene.conduits) {
+            std::cout << "  - Conducto #" << cond.id << " (z=" << std::setprecision(2) << cond.mean_depth_m << " m): "
+                      << cond.material.name_es
+                      << " (" << std::setprecision(1) << (cond.material.probability * 100.0) << "%)\n";
+        }
+    }
 
     for (const auto& out_path : output_paths) {
         if (out_path.has_parent_path()) {

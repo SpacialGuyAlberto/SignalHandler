@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <vector>
 
 namespace gpr3d::dsp {
@@ -25,11 +26,19 @@ void SignalProcessor::process(BScan& bscan, const ProcessingConfig& cfg) {
 
     // 3. Zero-phase frequency bandpass around antenna spectrum
     if (cfg.enable_bandpass) {
-        const double fc = (bscan.metadata.antenna_freq_mhz > 10.0)
-                              ? bscan.metadata.antenna_freq_mhz
-                              : 400.0;
-        const double f_low = (cfg.low_cut_mhz > 0.0) ? cfg.low_cut_mhz : (0.25 * fc);
-        const double f_high = (cfg.high_cut_mhz > 0.0) ? cfg.high_cut_mhz : (2.50 * fc);
+        const double dt = bscan.metadata.sample_interval_ns;
+        const double nyq_mhz = (dt > 0.0) ? (500.0 / dt) : 2500.0;
+        const double tw_ns = std::max(5.0, bscan.metadata.time_window_ns);
+        const double min_valid_fc = std::max(40.0, 3000.0 / tw_ns);
+        const double max_valid_fc = std::min(3200.0, 0.45 * nyq_mhz);
+        const double hdr_fc = bscan.metadata.antenna_freq_mhz;
+        const double fc = (hdr_fc >= min_valid_fc && hdr_fc <= max_valid_fc)
+                              ? hdr_fc
+                              : std::clamp(15000.0 / tw_ns, min_valid_fc, max_valid_fc);
+        const double f_low = (cfg.low_cut_mhz > 0.0) ? cfg.low_cut_mhz : (0.20 * fc);
+        const double f_high = (cfg.high_cut_mhz > 0.0)
+                                  ? cfg.high_cut_mhz
+                                  : std::min(0.92 * nyq_mhz, 2.50 * fc);
         apply_bandpass(bscan, f_low, f_high, cfg.butterworth_order);
     }
 
@@ -159,7 +168,14 @@ void SignalProcessor::apply_time_zero(
         std::move(tr.samples.begin() + static_cast<std::ptrdiff_t>(shift),
                   tr.samples.end(),
                   tr.samples.begin());
-        std::fill(tr.samples.end() - static_cast<std::ptrdiff_t>(shift), tr.samples.end(), 0.0);
+        const std::size_t valid_end = tr.samples.size() - shift;
+        std::fill(tr.samples.begin() + static_cast<std::ptrdiff_t>(valid_end), tr.samples.end(), 0.0);
+        // Cosine-taper the last 16 valid samples before the shifted zero-pad so bandpass sees zero step jump
+        const std::size_t fade = std::min<std::size_t>(16, valid_end / 4);
+        for (std::size_t k = 0; k < fade; ++k) {
+            const double u = static_cast<double>(k) / static_cast<double>(fade);
+            tr.samples[valid_end - 1 - k] *= 0.5 * (1.0 - std::cos(std::numbers::pi * u));
+        }
     }
     bscan.metadata.time_zero_ns = 0.0;
 }
@@ -179,7 +195,9 @@ void SignalProcessor::apply_bandpass(BScan& bscan, double low_mhz, double high_m
     const double f_hi = std::clamp(high_mhz, f_lo + 1.0, nyquist_mhz * 0.99);
     const int ord = std::clamp(order, 1, 12);
 
-    const std::size_t n_fft = next_power_of_two(ns);
+    // Zero-pad to >= 2*ns so zero-phase FFT filtering performs linear (non-circular) convolution
+    // and never wraps the t=0 direct-wave spike into the late-time bottom of the trace!
+    const std::size_t n_fft = next_power_of_two(ns * 2);
     std::vector<double> gain(n_fft, 0.0);
 
     for (std::size_t k = 1; k <= n_fft / 2; ++k) {
@@ -196,6 +214,7 @@ void SignalProcessor::apply_bandpass(BScan& bscan, double low_mhz, double high_m
     }
 
     std::vector<std::complex<double>> buf(n_fft);
+    const std::size_t tail_taper = std::clamp<std::size_t>(ns / 25, 4, 24);
     for (auto& tr : bscan.traces) {
         std::fill(buf.begin(), buf.end(), std::complex<double>{0.0, 0.0});
         const std::size_t m = std::min(ns, tr.samples.size());
@@ -208,7 +227,12 @@ void SignalProcessor::apply_bandpass(BScan& bscan, double low_mhz, double high_m
         }
         auto inv = fft_inverse(spec);
         for (std::size_t j = 0; j < m; ++j) {
-            tr.samples[j] = inv[j].real();
+            double w = 1.0;
+            if (m > tail_taper * 2 && j + tail_taper >= m) {
+                const double u = static_cast<double>(m - 1 - j) / static_cast<double>(tail_taper);
+                w = 0.5 * (1.0 - std::cos(std::numbers::pi * u));
+            }
+            tr.samples[j] = inv[j].real() * w;
         }
     }
 }

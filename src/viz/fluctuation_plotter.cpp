@@ -23,6 +23,20 @@ namespace gpr3d::viz {
 
 namespace {
 
+std::string js_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (unsigned char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else out.push_back(static_cast<char>(c));
+    }
+    return out;
+}
+
 #ifdef GPR3D_USE_CAIRO
 struct Rect {
     double x{};
@@ -87,33 +101,40 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
 
     // Global header banner
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 20.0);
+    cairo_set_font_size(cr, 19.5);
     cairo_set_source_rgb(cr, 0.96, 0.98, 1.00);
-    cairo_move_to(cr, 24.0, 32.0);
-    cairo_show_text(cr, "GPR / GDR Subsurface Signal Fluctuations & 3D Object Interpretation");
+    cairo_move_to(cr, 24.0, 30.0);
+    cairo_show_text(cr, "GPR / GDR — Fluctuaciones de Señal, Objetos 3D e Inversión Litológica");
 
     {
         std::ostringstream info;
-        info << std::fixed << std::setprecision(6);
+        info << std::fixed << std::setprecision(5);
         if (scene.has_valid_crs) {
-            info << "Origin WGS84: (" << scene.origin_wgs84.latitude_deg << ", "
-                 << scene.origin_wgs84.longitude_deg << ", "
-                 << std::setprecision(2) << scene.origin_wgs84.altitude_m << " m)  |  UTM "
-                 << scene.origin_utm.zone_string() << " (EPSG:" << scene.origin_utm.epsg_code() << ")  |  ";
+            info << "WGS84: (" << scene.origin_wgs84.latitude_deg << ", "
+                 << scene.origin_wgs84.longitude_deg << ") UTM "
+                 << scene.origin_utm.zone_string() << "  |  ";
         }
-        info << "Detected 3D Objects: " << scene.conduits.size() << " Conduits, "
-             << scene.horizons.size() << " Horizons, "
-             << scene.anomalies.size() << " Anomalies";
+        info << std::setprecision(2)
+             << "Suelo Dom.: " << scene.subsurface.dominant_soil.name_es
+             << " (" << static_cast<int>(std::lround(scene.subsurface.dominant_soil.probability * 100.0)) << "%)"
+             << "  |  eps_r=" << scene.subsurface.inverted_bulk_epsr
+             << " (v=" << std::setprecision(3) << scene.subsurface.inverted_bulk_velocity_m_ns << " m/ns)"
+             << std::setprecision(2)
+             << "  |  alfa=" << scene.subsurface.bulk_attenuation.attenuation_db_per_m << " dB/m"
+             << ", sigma=" << scene.subsurface.bulk_attenuation.conductivity_ms_m << " mS/m"
+             << "  |  Obj: " << scene.conduits.size() << " Cond., "
+             << scene.horizons.size() << " Estr., "
+             << scene.anomalies.size() << " Anom.";
 
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(cr, 12.0);
-        cairo_set_source_rgb(cr, 0.56, 0.76, 0.96);
-        cairo_move_to(cr, 24.0, 52.0);
+        cairo_set_font_size(cr, 11.5);
+        cairo_set_source_rgb(cr, 0.56, 0.78, 0.98);
+        cairo_move_to(cr, 24.0, 50.0);
         cairo_show_text(cr, info.str().c_str());
     }
 
     const double pad = 20.0;
-    const double top_y = 68.0;
+    const double top_y = 66.0;
     const double panel_w = (W - 3.0 * pad) * 0.5;
     const double panel_h = (H - top_y - 2.0 * pad) * 0.5;
 
@@ -126,14 +147,17 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
     const auto& fluc = scene.fluctuations;
 
     // -------------------------------------------------------------------------
-    // PANEL 1: B-Scan Radargram Heatmap + Detected 3D Objects Overlay
+    // PANEL 1: B-Scan Radargram Heatmap + Detected 3D Objects + Lithology Strip
     // -------------------------------------------------------------------------
     draw_panel_frame(
         cr, p1,
-        "1. B-Scan Radargram & Detected 3D Subsurface Objects",
-        "Signed Wavelet Amplitude Heatmap + Horizons (dashed) + Conduits (crosshairs)");
+        "1. Radargrama B-Scan, Objetos 3D & Columna Estratigráfica",
+        "Amplitud de onda + Horizontes + Conductos + Litología invertida (derecha)");
 
-    const Rect c1{p1.x + 54.0, p1.y + 50.0, p1.w - 72.0, p1.h - 78.0};
+    const bool has_litho = !scene.subsurface.strata.empty();
+    const double litho_w = has_litho ? 148.0 : 0.0;
+    const Rect c1{p1.x + 52.0, p1.y + 50.0, p1.w - 68.0 - litho_w, p1.h - 78.0};
+
     if (!bscan.empty() && bscan.num_samples() > 1) {
         const int img_w = std::max(16, static_cast<int>(c1.w));
         const int img_h = std::max(16, static_cast<int>(c1.h));
@@ -144,7 +168,7 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
                 max_abs = std::max(max_abs, std::abs(s));
             }
         }
-        const double clip_amp = 0.65 * max_abs;  // Enhance contrast of subsurface oscillations
+        const double clip_amp = 0.65 * max_abs;
 
         cairo_surface_t* img = cairo_image_surface_create(CAIRO_FORMAT_RGB24, img_w, img_h);
         unsigned char* data = cairo_image_surface_get_data(img);
@@ -188,9 +212,16 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
 
         const double dashes[2] = {6.0, 4.0};
         cairo_set_dash(cr, dashes, 2, 0.0);
-        cairo_set_line_width(cr, 2.2);
+        cairo_set_line_width(cr, 2.3);
         for (const auto& hz : scene.horizons) {
-            cairo_set_source_rgb(cr, 1.0, 0.78, 0.12);
+            if (hz.material.kind != geo::MaterialKind::Unknown) {
+                cairo_set_source_rgb(cr,
+                                     hz.material.color_rgba[0],
+                                     hz.material.color_rgba[1],
+                                     hz.material.color_rgba[2]);
+            } else {
+                cairo_set_source_rgb(cr, 1.0, 0.78, 0.12);
+            }
             const double x0 = c1.x;
             const double x1 = c1.x + c1.w;
             const double d0 = hz.mean_depth_m - 0.5 * hz.dip_slope_m_per_m * max_x_m;
@@ -204,7 +235,6 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
         // Overlay detected conduits projected along track
         for (const auto& cond : scene.conduits) {
             if (cond.centerline_wgs84.empty()) continue;
-            // Find closest trace along primary B-scan to conduit's first node
             std::size_t best_i = 0;
             double best_dist = 1e9;
             for (std::size_t i = 0; i < bscan.num_traces(); ++i) {
@@ -218,16 +248,15 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
             const double cx = c1.x + (bscan.traces[best_i].distance_along_track_m / max_x_m) * c1.w;
             const double cy = c1.y + (cond.mean_depth_m / max_d_m) * c1.h;
 
-            if (cond.polarity == scene::PolarityKind::MetallicOrHighPermittivity) {
-                cairo_set_source_rgb(cr, 0.98, 0.22, 0.20);
-            } else {
-                cairo_set_source_rgb(cr, 0.08, 0.92, 0.62);
-            }
-            cairo_set_line_width(cr, 2.4);
-            cairo_arc(cr, cx, cy, 8.5, 0.0, 2.0 * std::numbers::pi);
+            cairo_set_source_rgb(cr,
+                                 cond.material.color_rgba[0],
+                                 cond.material.color_rgba[1],
+                                 cond.material.color_rgba[2]);
+            cairo_set_line_width(cr, 2.3);
+            cairo_arc(cr, cx, cy, 8.0, 0.0, 2.0 * std::numbers::pi);
             cairo_stroke(cr);
-            cairo_move_to(cr, cx - 12.0, cy); cairo_line_to(cr, cx + 12.0, cy);
-            cairo_move_to(cr, cx, cy - 12.0); cairo_line_to(cr, cx, cy + 12.0);
+            cairo_move_to(cr, cx - 11.0, cy); cairo_line_to(cr, cx + 11.0, cy);
+            cairo_move_to(cr, cx, cy - 11.0); cairo_line_to(cr, cx, cy + 11.0);
             cairo_stroke(cr);
         }
 
@@ -242,6 +271,65 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
             cairo_stroke(cr);
         }
         cairo_restore(cr);
+
+        // Draw Lithological Stratigraphic Column on right side of Panel 1
+        if (has_litho) {
+            const double lx = c1.x + c1.w + 8.0;
+            const double lw = litho_w - 8.0;
+
+            cairo_save(cr);
+            cairo_rectangle(cr, lx, c1.y, lw, c1.h);
+            cairo_clip(cr);
+
+            const double col_max_d = std::max(max_d_m, scene.subsurface.strata.back().depth_bottom_m);
+
+            for (const auto& st : scene.subsurface.strata) {
+                const double y0 = c1.y + std::clamp(st.depth_top_m / col_max_d, 0.0, 1.0) * c1.h;
+                const double y1 = c1.y + std::clamp(st.depth_bottom_m / col_max_d, 0.0, 1.0) * c1.h;
+                const double bh = std::max(14.0, y1 - y0);
+
+                cairo_set_source_rgba(cr,
+                                      st.primary_material.color_rgba[0],
+                                      st.primary_material.color_rgba[1],
+                                      st.primary_material.color_rgba[2],
+                                      0.88);
+                cairo_rectangle(cr, lx, y0, lw, bh);
+                cairo_fill_preserve(cr);
+                cairo_set_source_rgb(cr, 0.12, 0.16, 0.22);
+                cairo_set_line_width(cr, 1.0);
+                cairo_stroke(cr);
+
+                if (bh >= 22.0) {
+                    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                    cairo_set_font_size(cr, 9.5);
+                    cairo_set_source_rgb(cr, 0.98, 0.99, 1.0);
+                    // Shortened label to fit neatly without unclosed parentheses
+                    std::string short_es = st.primary_material.name_es;
+                    const auto slash_pos = short_es.find(" /");
+                    if (slash_pos != std::string::npos) {
+                        short_es = short_es.substr(0, slash_pos);
+                    }
+                    const auto paren_pos = short_es.find(" (");
+                    if (paren_pos != std::string::npos) {
+                        short_es = short_es.substr(0, paren_pos);
+                    }
+                    cairo_move_to(cr, lx + 5.0, y0 + 13.0);
+                    cairo_show_text(cr, short_es.c_str());
+
+                    if (bh >= 34.0) {
+                        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+                        cairo_set_font_size(cr, 9.0);
+                        char sub_lbl[64]{};
+                        std::snprintf(sub_lbl, sizeof(sub_lbl), "eps=%.1f | %d%%",
+                                      st.estimated_epsr,
+                                      static_cast<int>(std::lround(st.primary_material.probability * 100.0)));
+                        cairo_move_to(cr, lx + 5.0, y0 + 25.0);
+                        cairo_show_text(cr, sub_lbl);
+                    }
+                }
+            }
+            cairo_restore(cr);
+        }
 
         // Axis ticks
         cairo_set_source_rgb(cr, 0.72, 0.78, 0.86);
@@ -264,8 +352,8 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
     // -------------------------------------------------------------------------
     draw_panel_frame(
         cr, p2,
-        "2. Geophysical Wiggle-Trace Signal Fluctuations",
-        "Decimated Vertical Wavelets with Positive-Polarity Excursion Shading");
+        "2. Fluctuaciones Geofísicas Wiggle-Trace",
+        "Ondículas verticales diezmadas con sombreado de semieje positivo");
 
     const Rect c2{p2.x + 50.0, p2.y + 50.0, p2.w - 68.0, p2.h - 78.0};
     cairo_set_source_rgb(cr, 0.05, 0.07, 0.11);
@@ -340,9 +428,9 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
     // -------------------------------------------------------------------------
     {
         std::ostringstream sub;
-        sub << "Trace #" << fluc.representative_trace_idx
-            << "  |  Cyan: Signal s(t), Amber: +-Hilbert Envelope |z(t)|";
-        draw_panel_frame(cr, p3, "3. A-Scan Waveform & Instantaneous Envelope Fluctuations", sub.str());
+        sub << "Traza #" << fluc.representative_trace_idx
+            << "  |  Cian: Señal s(t), Ámbar: +-Envolvente de Hilbert |z(t)|";
+        draw_panel_frame(cr, p3, "3. Forma de Onda A-Scan & Envolvente Instantánea", sub.str());
     }
 
     const Rect c3{p3.x + 54.0, p3.y + 50.0, p3.w - 72.0, p3.h - 78.0};
@@ -406,8 +494,8 @@ void render_4panel_cairo(cairo_t* cr, const scene::Scene3D& scene, const PlotOpt
     // -------------------------------------------------------------------------
     draw_panel_frame(
         cr, p4,
-        "4. Spectral Power Density (FFT) & Spatial Energy Fluctuation",
-        "Top: Ensemble Spectrum [0..1600 MHz] (dB)  |  Bottom: Per-Trace RMS Energy");
+        "4. Densidad Espectral de Potencia (FFT) & Fluctuación RMS",
+        "Arriba: Espectro medio [0..1600 MHz] (dB)  |  Abajo: Energía RMS por traza");
 
     const Rect c4_top{p4.x + 54.0, p4.y + 50.0, p4.w - 72.0, (p4.h - 92.0) * 0.56};
     const Rect c4_bot{p4.x + 54.0, c4_top.y + c4_top.h + 24.0, p4.w - 72.0, (p4.h - 92.0) * 0.40};
@@ -560,15 +648,16 @@ void FluctuationPlotter::write_html_dashboard(
         throw std::runtime_error("Cannot open HTML dashboard for writing: " + html_path.string());
     }
 
-    // Subsample B-scan matrix slightly if huge so standalone HTML stays fast & lightweight
     const auto& bscan = scene.primary_processed_bscan;
     const std::size_t n_tr = bscan.num_traces();
     const std::size_t ns = bscan.num_samples();
     const std::size_t tr_step = std::max<std::size_t>(1, n_tr / 180);
     const std::size_t s_step = std::max<std::size_t>(1, ns / 220);
 
-    auto emit_mesh_json = [&](const scene::Mesh3D& m, const std::string& category, const std::string& meta_info) {
-        out << "{\"name\":\"" << m.name << "\",\"cat\":\"" << category << "\",\"info\":\"" << meta_info << "\","
+    auto emit_mesh_json = [&](const scene::Mesh3D& m, const std::string& category,
+                              const std::string& display_title, const std::string& meta_info) {
+        out << "{\"name\":\"" << js_escape(display_title) << "\",\"cat\":\"" << category
+            << "\",\"info\":\"" << js_escape(meta_info) << "\","
             << std::fixed << std::setprecision(3)
             << "\"rgba\":[" << m.color.r << "," << m.color.g << "," << m.color.b << "," << m.color.a << "],"
             << "\"v\":[";
@@ -588,33 +677,46 @@ void FluctuationPlotter::write_html_dashboard(
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>gpr3d - Escena Subterránea 3D & Fluctuaciones de Señal</title>
+<title>gpr3d - Escena Subterránea 3D, Suelos &amp; Fluctuaciones GPR</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0b0f17; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
   header { padding: 10px 18px; background: #111827; border-bottom: 1px solid #1f2937; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { font-size: 16px; font-weight: 700; color: #f8fafc; }
-  header .crs { font-size: 12px; color: #60a5fa; font-family: monospace; }
-  .layout { flex: 1; display: grid; grid-template-columns: 58% 42%; gap: 10px; padding: 10px; min-height: 0; }
+  header h1 { font-size: 15px; font-weight: 700; color: #f8fafc; }
+  header .crs { font-size: 11.5px; color: #60a5fa; font-family: monospace; }
+  .layout { flex: 1; display: grid; grid-template-columns: 44% 34% 22%; gap: 10px; padding: 10px; min-height: 0; }
   .card { background: #111827; border: 1px solid #1f2937; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
   .card-hdr { padding: 8px 12px; background: #161f30; border-bottom: 1px solid #1f2937; font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
-  .controls { display: flex; gap: 10px; font-size: 11px; font-weight: 400; color: #cbd5e1; }
-  .controls label { cursor: pointer; display: flex; align-items: center; gap: 4px; }
-  .right-col { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; min-height: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-weight: 400; color: #cbd5e1; }
+  .controls label { cursor: pointer; display: flex; align-items: center; gap: 3px; }
+  .mid-col { display: grid; grid-template-rows: 1fr 1fr; gap: 10px; min-height: 0; }
   canvas { width: 100%; height: 100%; display: block; }
-  .obj-overlay { position: absolute; bottom: 10px; left: 10px; background: rgba(15,23,42,0.88); border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; max-width: 380px; max-height: 170px; overflow-y: auto; font-size: 11px; line-height: 1.45; }
+  .obj-overlay { position: absolute; bottom: 10px; left: 10px; background: rgba(15,23,42,0.90); border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; max-width: 92%; max-height: 155px; overflow-y: auto; font-size: 11px; line-height: 1.45; }
   .badge { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  .litho-panel { padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; font-size: 11.5px; }
+  .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .kpi { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 6px 8px; }
+  .kpi .lbl { font-size: 10px; color: #94a3b8; text-transform: uppercase; }
+  .kpi .val { font-size: 13px; font-weight: 700; color: #38bdf8; font-family: monospace; margin-top: 2px; }
+  .strat-col-wrap { display: flex; gap: 8px; min-height: 160px; }
+  .strat-bar { width: 34px; border-radius: 5px; overflow: hidden; border: 1px solid #334155; display: flex; flex-direction: column; flex-shrink: 0; }
+  .strat-cards { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+  .layer-card { background: #0f172a; border-left: 4px solid #64748b; border-radius: 5px; padding: 7px 9px; border-top: 1px solid #1e293b; border-right: 1px solid #1e293b; border-bottom: 1px solid #1e293b; }
+  .layer-card .top-row { display: flex; justify-content: space-between; align-items: center; font-weight: 700; color: #f1f5f9; }
+  .prob-pill { background: #1e293b; color: #34d399; padding: 1px 6px; border-radius: 10px; font-size: 10.5px; font-family: monospace; }
+  .layer-card .sub-en { font-size: 10.5px; color: #94a3b8; margin-bottom: 4px; }
+  .layer-card .props { font-family: monospace; font-size: 10.5px; color: #cbd5e1; line-height: 1.4; }
 </style>
 </head>
 <body>
 <header>
-  <h1>gpr3d — Interpretación de Objetos 3D &amp; Fluctuaciones Gráficas GPR</h1>
+  <h1>gpr3d — Escena 3D, Clasificación Litológica de Suelos &amp; Fluctuaciones GPR</h1>
   <div class="crs" id="crsBanner"></div>
 </header>
 <div class="layout">
   <div class="card">
     <div class="card-hdr">
-      <span>Escena 3D Georreferenciada (Arrastrar: Orbitar | Rueda: Zoom)</span>
+      <span>Escena 3D (Arrastrar: Orbitar | Rueda: Zoom)</span>
       <div class="controls">
         <label><input type="checkbox" id="chkConduits" checked> Conductos</label>
         <label><input type="checkbox" id="chkHorizons" checked> Estratos</label>
@@ -626,19 +728,32 @@ void FluctuationPlotter::write_html_dashboard(
     <canvas id="cv3d"></canvas>
     <div class="obj-overlay" id="objList"></div>
   </div>
-  <div class="right-col">
+  <div class="mid-col">
     <div class="card">
       <div class="card-hdr">
-        <span>Radargrama B-Scan &amp; Fluctuación (Haz clic para inspeccionar traza)</span>
+        <span>Radargrama B-Scan (Clic para inspeccionar traza)</span>
         <span id="traceInfo" style="color:#38bdf8;font-family:monospace;"></span>
       </div>
       <canvas id="cvBscan"></canvas>
     </div>
     <div class="card">
       <div class="card-hdr">
-        <span>Fluctuación A-Scan s(t), Envolvente de Hilbert |z(t)| y Espectro FFT</span>
+        <span>Pulso A-Scan s(t), Envolvente de Hilbert |z(t)| y Espectro FFT</span>
       </div>
       <canvas id="cvAscan"></canvas>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hdr">
+      <span>Estratigrafía Litológica y Materiales</span>
+    </div>
+    <div class="litho-panel">
+      <div class="kpi-grid" id="invKpis"></div>
+      <div style="font-weight:600;color:#cbd5e1;margin-top:2px;">Columna Estratigráfica Detectada</div>
+      <div class="strat-col-wrap">
+        <div class="strat-bar" id="stratBar"></div>
+        <div class="strat-cards" id="stratCards"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -656,7 +771,41 @@ const SCENE = )HTML";
             << "\"zone\":\"" << scene.origin_utm.zone_string() << "\","
             << "\"epsg\":" << scene.origin_utm.epsg_code();
     }
-    out << "},\"meshes\":[";
+    out << "},\"inversion\":{"
+        << std::fixed << std::setprecision(3)
+        << "\"header_epsr\":" << scene.subsurface.nominal_header_epsr << ","
+        << "\"bulk_epsr\":" << scene.subsurface.inverted_bulk_epsr << ","
+        << "\"vel_m_ns\":" << scene.subsurface.inverted_bulk_velocity_m_ns << ","
+        << "\"atten_db_m\":" << scene.subsurface.bulk_attenuation.attenuation_db_per_m << ","
+        << "\"sigma_ms_m\":" << scene.subsurface.bulk_attenuation.conductivity_ms_m << ","
+        << "\"loss_tan\":" << scene.subsurface.bulk_attenuation.loss_tangent << ","
+        << "\"hyp_count\":" << scene.subsurface.hyperbola_fits.size() << ","
+        << "\"dominant_es\":\"" << js_escape(scene.subsurface.dominant_soil.name_es) << "\","
+        << "\"strata\":[";
+    for (std::size_t k = 0; k < scene.subsurface.strata.size(); ++k) {
+        const auto& st = scene.subsurface.strata[k];
+        if (k > 0) out << ",";
+        std::string alt_es;
+        if (st.candidates.size() > 1) {
+            alt_es = st.candidates[1].name_es;
+        }
+        out << std::fixed << std::setprecision(3)
+            << "{\"idx\":" << st.layer_index
+            << ",\"z0\":" << st.depth_top_m
+            << ",\"z1\":" << st.depth_bottom_m
+            << ",\"thick\":" << st.thickness_m
+            << ",\"r_top\":" << st.reflection_coeff_top
+            << ",\"eps\":" << st.estimated_epsr
+            << ",\"vel\":" << st.velocity_m_ns
+            << ",\"att\":" << st.attenuation_db_m
+            << ",\"sig\":" << st.conductivity_ms_m
+            << ",\"es\":\"" << js_escape(st.primary_material.name_es) << "\""
+            << ",\"en\":\"" << js_escape(st.primary_material.name_en) << "\""
+            << ",\"prob\":" << st.primary_material.probability
+            << ",\"hex\":\"" << st.primary_material.color_hex() << "\""
+            << ",\"alt\":\"" << js_escape(alt_es) << "\"}";
+    }
+    out << "]},\"meshes\":[";
     bool first_m = true;
     auto sep_m = [&]() {
         if (!first_m) out << ",";
@@ -665,33 +814,39 @@ const SCENE = )HTML";
 
     if (!scene.ground_surface.empty()) {
         sep_m();
-        emit_mesh_json(scene.ground_surface, "ground", "Superficie del terreno");
+        const std::string g_info = (!scene.subsurface.strata.empty())
+                                       ? ("Capa superficial: " + scene.subsurface.strata.front().primary_material.name_es)
+                                       : "Superficie del terreno";
+        emit_mesh_json(scene.ground_surface, "ground", "Superficie", g_info);
     }
     for (const auto& hz : scene.horizons) {
         if (hz.mesh.empty()) continue;
         sep_m();
         std::ostringstream inf;
-        inf << std::fixed << std::setprecision(2) << "Prof. media: " << hz.mean_depth_m << " m";
-        emit_mesh_json(hz.mesh, "horizon", inf.str());
+        inf << hz.material.name_es << " ("
+            << static_cast<int>(std::lround(hz.material.probability * 100.0)) << "%) | Prof: "
+            << std::fixed << std::setprecision(2) << hz.mean_depth_m << " m | eps_r="
+            << std::setprecision(1) << hz.material.estimated_epsr;
+        emit_mesh_json(hz.mesh, "horizon", "Estrato #" + std::to_string(hz.id), inf.str());
     }
     for (const auto& c : scene.conduits) {
         if (c.mesh.empty()) continue;
         sep_m();
         std::ostringstream inf;
-        inf << std::fixed << std::setprecision(2)
-            << "Prof: " << c.mean_depth_m << " m | Diam: " << (c.estimated_radius_m * 200.0) << " cm";
-        if (!c.centerline_wgs84.empty()) {
-            inf << std::setprecision(6) << " | (" << c.centerline_wgs84.front().latitude_deg
-                << ", " << c.centerline_wgs84.front().longitude_deg << ")";
-        }
-        emit_mesh_json(c.mesh, "conduit", inf.str());
+        inf << c.material.name_es << " ("
+            << static_cast<int>(std::lround(c.material.probability * 100.0)) << "%) | Prof: "
+            << std::fixed << std::setprecision(2) << c.mean_depth_m
+            << " m | Ø " << std::setprecision(0) << (c.estimated_radius_m * 2000.0) << " mm";
+        emit_mesh_json(c.mesh, "conduit", "Conducto #" + std::to_string(c.id), inf.str());
     }
     for (const auto& a : scene.anomalies) {
         if (a.mesh.empty()) continue;
         sep_m();
         std::ostringstream inf;
-        inf << std::fixed << std::setprecision(2) << "Prof: " << a.depth_m << " m";
-        emit_mesh_json(a.mesh, "anomaly", inf.str());
+        inf << a.material.name_es << " ("
+            << static_cast<int>(std::lround(a.material.probability * 100.0)) << "%) | Prof: "
+            << std::fixed << std::setprecision(2) << a.depth_m << " m";
+        emit_mesh_json(a.mesh, "anomaly", "Anomalía #" + std::to_string(a.id), inf.str());
     }
     out << "],\"pts\":[";
     const std::size_t pt_step = std::max<std::size_t>(1, scene.point_cloud.size() / 1500);
@@ -749,6 +904,37 @@ const objHtml = SCENE.meshes.filter(m => m.cat !== 'ground').map(m => {
   return `<div><span class="badge" style="background:rgb(${c[0]},${c[1]},${c[2]})"></span><b>${m.name}</b> — ${m.info}</div>`;
 }).join('');
 document.getElementById('objList').innerHTML = objHtml || '<div>Sin objetos discretos sobre el umbral</div>';
+
+// Render Subsurface Inversion KPIs & Stratigraphic Column
+const inv = SCENE.inversion;
+document.getElementById('invKpis').innerHTML = `
+  <div class="kpi"><div class="lbl">Permitividad Media (&epsilon;<sub>r</sub>)</div><div class="val">${inv.bulk_epsr.toFixed(2)}</div></div>
+  <div class="kpi"><div class="lbl">Velocidad Real (v)</div><div class="val">${inv.vel_m_ns.toFixed(3)} m/ns</div></div>
+  <div class="kpi"><div class="lbl">Atenuación (&alpha;)</div><div class="val">${inv.atten_db_m.toFixed(2)} dB/m</div></div>
+  <div class="kpi"><div class="lbl">Conductividad (&sigma;)</div><div class="val">${inv.sigma_ms_m.toFixed(1)} mS/m</div></div>
+`;
+
+const totalD = inv.strata.reduce((s, l) => s + l.thick, 0) || 1.0;
+document.getElementById('stratBar').innerHTML = inv.strata.map(l => {
+  const pct = Math.max(8, (l.thick / totalD) * 100);
+  return `<div title="Capa ${l.idx}: ${l.es} (${l.z0.toFixed(2)}-${l.z1.toFixed(2)} m)" style="flex:${pct};background:${l.hex};border-bottom:1px solid rgba(0,0,0,0.4);"></div>`;
+}).join('');
+
+document.getElementById('stratCards').innerHTML = inv.strata.map(l => `
+  <div class="layer-card" style="border-left-color:${l.hex}">
+    <div class="top-row">
+      <span>Capa #${l.idx}: ${l.es}</span>
+      <span class="prob-pill">${Math.round(l.prob * 100)}%</span>
+    </div>
+    <div class="sub-en">${l.en}</div>
+    <div class="props">
+      Prof: <b>${l.z0.toFixed(2)} – ${l.z1.toFixed(2)} m</b> (&Delta;z = ${l.thick.toFixed(2)} m)<br>
+      &epsilon;<sub>r</sub> = ${l.eps.toFixed(2)} | v = ${l.vel.toFixed(3)} m/ns | R = ${l.r_top.toFixed(2)}<br>
+      &alpha; = ${l.att.toFixed(2)} dB/m | &sigma; = ${l.sig.toFixed(1)} mS/m
+      ${l.alt ? `<br><span style="color:#94a3b8">2ª hip.: ${l.alt}</span>` : ''}
+    </div>
+  </div>
+`).join('');
 
 let selTrace = Math.floor(SCENE.bscan.traces.length / 2);
 let maxAmp = 1;
@@ -974,4 +1160,3 @@ draw3D(); drawBscan(); drawAscan();
 }
 
 }  // namespace gpr3d::viz
-

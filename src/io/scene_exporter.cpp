@@ -19,21 +19,42 @@ namespace gpr3d::io {
 
 namespace {
 
-std::vector<const scene::Mesh3D*> collect_meshes(
+struct MeshEntry {
+    const scene::Mesh3D* mesh{nullptr};
+    const geo::MaterialMatch* material{nullptr};
+};
+
+std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (unsigned char c : s) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else out.push_back(static_cast<char>(c));
+    }
+    return out;
+}
+
+std::vector<MeshEntry> collect_meshes(
     const scene::Scene3D& scene,
     bool include_ground) {
-    std::vector<const scene::Mesh3D*> list;
+    std::vector<MeshEntry> list;
     if (include_ground && !scene.ground_surface.empty()) {
-        list.push_back(&scene.ground_surface);
+        const geo::MaterialMatch* top_mat =
+            (!scene.subsurface.strata.empty()) ? &scene.subsurface.strata.front().primary_material : nullptr;
+        list.push_back({&scene.ground_surface, top_mat});
     }
     for (const auto& hz : scene.horizons) {
-        if (!hz.mesh.empty()) list.push_back(&hz.mesh);
+        if (!hz.mesh.empty()) list.push_back({&hz.mesh, &hz.material});
     }
     for (const auto& cond : scene.conduits) {
-        if (!cond.mesh.empty()) list.push_back(&cond.mesh);
+        if (!cond.mesh.empty()) list.push_back({&cond.mesh, &cond.material});
     }
     for (const auto& an : scene.anomalies) {
-        if (!an.mesh.empty()) list.push_back(&an.mesh);
+        if (!an.mesh.empty()) list.push_back({&an.mesh, &an.material});
     }
     return list;
 }
@@ -70,7 +91,7 @@ void SceneExporter3D::write_obj(
 
     const bool use_utm = (opts.obj_coord_frame == CoordFrame3D::UTM) && scene.has_valid_crs;
 
-    out_obj << "# gpr3d Reconstructed 3D Subsurface Scene\n";
+    out_obj << "# gpr3d Reconstructed 3D Subsurface Scene & Material Classification\n";
     if (scene.has_valid_crs) {
         out_obj << std::fixed << std::setprecision(8)
                 << "# ORIGIN_WGS84 lat=" << scene.origin_wgs84.latitude_deg
@@ -82,8 +103,23 @@ void SceneExporter3D::write_obj(
                 << " northing=" << scene.origin_utm.northing_m << "\n"
                 << "# COORD_FRAME " << (use_utm ? "UTM_METERS" : "LOCAL_ENU_METERS") << "\n";
     }
+    if (!scene.subsurface.strata.empty()) {
+        out_obj << std::fixed << std::setprecision(3)
+                << "# SUBSURFACE_DOMINANT_SOIL " << scene.subsurface.dominant_soil.name_es
+                << " (" << scene.subsurface.dominant_soil.name_en << ") eps_r="
+                << scene.subsurface.inverted_bulk_epsr
+                << " atten_dB_m=" << scene.subsurface.bulk_attenuation.attenuation_db_per_m
+                << " sigma_mS_m=" << scene.subsurface.bulk_attenuation.conductivity_ms_m << "\n";
+        for (const auto& st : scene.subsurface.strata) {
+            out_obj << "# LITHOLOGY_LAYER #" << st.layer_index
+                    << " [" << st.depth_top_m << "m.." << st.depth_bottom_m << "m]"
+                    << " eps_r=" << st.estimated_epsr
+                    << " material=\"" << st.primary_material.name_es << "\""
+                    << " prob=" << (st.primary_material.probability * 100.0) << "%\n";
+        }
+    }
     out_obj << "mtllib " << mtl_path.filename().string() << "\n\n";
-    out_mtl << "# gpr3d Material Library\n\n";
+    out_mtl << "# gpr3d Geological & Utility Material Library\n\n";
 
     const auto meshes = collect_meshes(scene, opts.include_ground_surface);
     std::size_t v_offset = 1;  // Wavefront OBJ indices are 1-based
@@ -92,9 +128,14 @@ void SceneExporter3D::write_obj(
     out_mtl << std::fixed << std::setprecision(4);
 
     for (std::size_t m_idx = 0; m_idx < meshes.size(); ++m_idx) {
-        const auto& m = *meshes[m_idx];
+        const auto& m = *meshes[m_idx].mesh;
+        const auto* mat = meshes[m_idx].material;
         const std::string mat_name = "mat_" + m.name;
 
+        if (mat != nullptr) {
+            out_mtl << "# Material: " << mat->name_es << " / " << mat->name_en
+                    << " (eps_r=" << mat->estimated_epsr << ", prob=" << (mat->probability * 100.0) << "%)\n";
+        }
         out_mtl << "newmtl " << mat_name << "\n"
                 << "Ka " << (0.2f * m.color.r) << ' ' << (0.2f * m.color.g) << ' ' << (0.2f * m.color.b) << "\n"
                 << "Kd " << m.color.r << ' ' << m.color.g << ' ' << m.color.b << "\n"
@@ -103,6 +144,9 @@ void SceneExporter3D::write_obj(
                 << "d " << m.color.a << "\n"
                 << "illum 2\n\n";
 
+        if (mat != nullptr) {
+            out_obj << "# Classified Material: " << mat->name_es << " (" << mat->color_hex() << ")\n";
+        }
         out_obj << "o " << m.name << "\n"
                 << "usemtl " << mat_name << "\n";
 
@@ -159,13 +203,14 @@ void SceneExporter3D::write_glb(
     std::ostringstream views_json;
     std::ostringstream root_nodes_json;
 
-    nodes_json << std::fixed << std::setprecision(6);
+    nodes_json << std::fixed << std::setprecision(4);
     meshes_json << std::fixed << std::setprecision(6);
     materials_json << std::fixed << std::setprecision(4);
     accessors_json << std::fixed << std::setprecision(5);
 
     for (std::size_t m_idx = 0; m_idx < meshes.size(); ++m_idx) {
-        const auto& m = *meshes[m_idx];
+        const auto& m = *meshes[m_idx].mesh;
+        const auto* mat = meshes[m_idx].material;
         const std::size_t n_verts = m.vertices.size();
         const std::size_t n_indices = m.triangles.size() * 3;
 
@@ -216,13 +261,22 @@ void SceneExporter3D::write_glb(
 
         root_nodes_json << comma << m_idx;
 
-        nodes_json << comma << "{\"name\":\"" << m.name << "\",\"mesh\":" << m_idx << "}";
+        nodes_json << comma << "{\"name\":\"" << json_escape(m.name) << "\",\"mesh\":" << m_idx;
+        if (mat != nullptr) {
+            nodes_json << ",\"extras\":{\"material_code\":\"" << json_escape(mat->code) << "\","
+                       << "\"material_es\":\"" << json_escape(mat->name_es) << "\","
+                       << "\"material_en\":\"" << json_escape(mat->name_en) << "\","
+                       << "\"probability\":" << mat->probability << ","
+                       << "\"estimated_epsr\":" << mat->estimated_epsr << ","
+                       << "\"attenuation_db_m\":" << mat->estimated_attenuation_db_m << "}";
+        }
+        nodes_json << "}";
 
         const bool translucent = (m.color.a < 0.99f);
         const bool double_sided = (m.kind == scene::SemanticKind::StratigraphicLayer ||
                                    m.kind == scene::SemanticKind::GroundSurface);
 
-        materials_json << comma << "{\"name\":\"mat_" << m.name << "\","
+        materials_json << comma << "{\"name\":\"mat_" << json_escape(m.name) << "\","
                        << "\"pbrMetallicRoughness\":{\"baseColorFactor\":["
                        << m.color.r << "," << m.color.g << "," << m.color.b << "," << m.color.a << "],"
                        << "\"metallicFactor\":" << m.metallic << ","
@@ -230,7 +284,7 @@ void SceneExporter3D::write_glb(
                        << "\"alphaMode\":\"" << (translucent ? "BLEND" : "OPAQUE") << "\","
                        << "\"doubleSided\":" << (double_sided ? "true" : "false") << "}";
 
-        meshes_json << comma << "{\"name\":\"" << m.name << "\",\"primitives\":[{"
+        meshes_json << comma << "{\"name\":\"" << json_escape(m.name) << "\",\"primitives\":[{"
                     << "\"attributes\":{\"POSITION\":" << base_acc
                     << ",\"NORMAL\":" << (base_acc + 1) << "},"
                     << "\"indices\":" << (base_acc + 2) << ","
@@ -272,7 +326,12 @@ void SceneExporter3D::write_glb(
             << std::setprecision(3)
             << "\"origin_alt_m\":" << scene.origin_wgs84.altitude_m << ","
             << "\"origin_utm_easting_m\":" << scene.origin_utm.easting_m << ","
-            << "\"origin_utm_northing_m\":" << scene.origin_utm.northing_m << "}";
+            << "\"origin_utm_northing_m\":" << scene.origin_utm.northing_m << ","
+            << "\"dominant_soil_es\":\"" << json_escape(scene.subsurface.dominant_soil.name_es) << "\","
+            << "\"dominant_soil_en\":\"" << json_escape(scene.subsurface.dominant_soil.name_en) << "\","
+            << "\"inverted_bulk_epsr\":" << scene.subsurface.inverted_bulk_epsr << ","
+            << "\"attenuation_db_m\":" << scene.subsurface.bulk_attenuation.attenuation_db_per_m << ","
+            << "\"conductivity_ms_m\":" << scene.subsurface.bulk_attenuation.conductivity_ms_m << "}";
     }
     doc << "}],"
         << "\"nodes\":[" << nodes_json.str() << "],"
@@ -322,18 +381,52 @@ void SceneExporter3D::write_geojson(
     }
 
     out << "{\n  \"type\": \"FeatureCollection\",\n";
+    out << "  \"metadata\": {\n";
     if (scene.has_valid_crs) {
         out << std::fixed << std::setprecision(8)
-            << "  \"metadata\": {\n"
             << "    \"crs_geodetic\": \"EPSG:4326\",\n"
             << "    \"crs_projected\": \"EPSG:" << scene.origin_utm.epsg_code() << "\",\n"
             << "    \"utm_zone\": \"" << scene.origin_utm.zone_string() << "\",\n"
             << "    \"origin_lat_deg\": " << scene.origin_wgs84.latitude_deg << ",\n"
             << "    \"origin_lon_deg\": " << scene.origin_wgs84.longitude_deg << ",\n"
             << std::setprecision(3)
-            << "    \"origin_alt_m\": " << scene.origin_wgs84.altitude_m << "\n"
-            << "  },\n";
+            << "    \"origin_alt_m\": " << scene.origin_wgs84.altitude_m << ",\n";
     }
+    out << std::fixed << std::setprecision(4)
+        << "    \"subsurface_inversion\": {\n"
+        << "      \"nominal_header_epsr\": " << scene.subsurface.nominal_header_epsr << ",\n"
+        << "      \"inverted_bulk_epsr\": " << scene.subsurface.inverted_bulk_epsr << ",\n"
+        << "      \"inverted_velocity_m_ns\": " << scene.subsurface.inverted_bulk_velocity_m_ns << ",\n"
+        << "      \"hyperbolas_fitted\": " << scene.subsurface.hyperbola_fits.size() << ",\n"
+        << "      \"mean_semblance\": " << scene.subsurface.mean_hyperbola_semblance << ",\n"
+        << "      \"attenuation_db_per_m\": " << scene.subsurface.bulk_attenuation.attenuation_db_per_m << ",\n"
+        << "      \"conductivity_ms_m\": " << scene.subsurface.bulk_attenuation.conductivity_ms_m << ",\n"
+        << "      \"loss_tangent\": " << scene.subsurface.bulk_attenuation.loss_tangent << ",\n"
+        << "      \"dominant_soil_es\": \"" << json_escape(scene.subsurface.dominant_soil.name_es) << "\",\n"
+        << "      \"dominant_soil_en\": \"" << json_escape(scene.subsurface.dominant_soil.name_en) << "\",\n"
+        << "      \"dominant_soil_probability\": " << scene.subsurface.dominant_soil.probability << ",\n"
+        << "      \"stratigraphic_column\": [\n";
+    for (std::size_t k = 0; k < scene.subsurface.strata.size(); ++k) {
+        const auto& st = scene.subsurface.strata[k];
+        if (k > 0) out << ",\n";
+        out << "        {\n"
+            << "          \"layer_index\": " << st.layer_index << ",\n"
+            << "          \"depth_top_m\": " << st.depth_top_m << ",\n"
+            << "          \"depth_bottom_m\": " << st.depth_bottom_m << ",\n"
+            << "          \"thickness_m\": " << st.thickness_m << ",\n"
+            << "          \"fresnel_R_top\": " << st.reflection_coeff_top << ",\n"
+            << "          \"estimated_epsr\": " << st.estimated_epsr << ",\n"
+            << "          \"velocity_m_ns\": " << st.velocity_m_ns << ",\n"
+            << "          \"attenuation_db_m\": " << st.attenuation_db_m << ",\n"
+            << "          \"conductivity_ms_m\": " << st.conductivity_ms_m << ",\n"
+            << "          \"material_code\": \"" << json_escape(st.primary_material.code) << "\",\n"
+            << "          \"material_es\": \"" << json_escape(st.primary_material.name_es) << "\",\n"
+            << "          \"material_en\": \"" << json_escape(st.primary_material.name_en) << "\",\n"
+            << "          \"probability\": " << st.primary_material.probability << ",\n"
+            << "          \"color_hex\": \"" << st.primary_material.color_hex() << "\"\n"
+            << "        }";
+    }
+    out << "\n      ]\n    }\n  },\n";
     out << "  \"features\": [\n";
 
     bool first_feat = true;
@@ -352,9 +445,15 @@ void SceneExporter3D::write_geojson(
             << "      \"type\": \"Feature\",\n"
             << "      \"properties\": {\n"
             << "        \"object_class\": \"conduit\",\n"
-            << "        \"label\": \"" << cond.label << "\",\n"
+            << "        \"label\": \"" << json_escape(cond.label) << "\",\n"
             << "        \"polarity\": \"" << scene::to_string(cond.polarity) << "\",\n"
+            << "        \"material_code\": \"" << json_escape(cond.material.code) << "\",\n"
+            << "        \"material_es\": \"" << json_escape(cond.material.name_es) << "\",\n"
+            << "        \"material_en\": \"" << json_escape(cond.material.name_en) << "\",\n"
             << std::fixed << std::setprecision(4)
+            << "        \"material_probability\": " << cond.material.probability << ",\n"
+            << "        \"estimated_epsr\": " << cond.material.estimated_epsr << ",\n"
+            << "        \"color_hex\": \"" << cond.material.color_hex() << "\",\n"
             << "        \"mean_depth_m\": " << cond.mean_depth_m << ",\n"
             << "        \"estimated_radius_m\": " << cond.estimated_radius_m << ",\n"
             << "        \"estimated_diameter_mm\": " << (cond.estimated_radius_m * 2000.0) << ",\n"
@@ -382,8 +481,15 @@ void SceneExporter3D::write_geojson(
             << "      \"type\": \"Feature\",\n"
             << "      \"properties\": {\n"
             << "        \"object_class\": \"stratigraphic_horizon\",\n"
-            << "        \"label\": \"" << hz.label << "\",\n"
+            << "        \"label\": \"" << json_escape(hz.label) << "\",\n"
+            << "        \"material_code\": \"" << json_escape(hz.material.code) << "\",\n"
+            << "        \"material_es\": \"" << json_escape(hz.material.name_es) << "\",\n"
+            << "        \"material_en\": \"" << json_escape(hz.material.name_en) << "\",\n"
             << std::fixed << std::setprecision(4)
+            << "        \"material_probability\": " << hz.material.probability << ",\n"
+            << "        \"estimated_epsr\": " << hz.material.estimated_epsr << ",\n"
+            << "        \"fresnel_reflection_coeff\": " << hz.fresnel_reflection_coeff << ",\n"
+            << "        \"color_hex\": \"" << hz.material.color_hex() << "\",\n"
             << "        \"mean_depth_m\": " << hz.mean_depth_m << ",\n"
             << "        \"dip_slope_m_per_m\": " << hz.dip_slope_m_per_m << ",\n"
             << "        \"mean_intensity\": " << hz.mean_intensity << "\n"
@@ -408,9 +514,15 @@ void SceneExporter3D::write_geojson(
             << "      \"type\": \"Feature\",\n"
             << "      \"properties\": {\n"
             << "        \"object_class\": \"subsurface_anomaly\",\n"
-            << "        \"label\": \"" << an.label << "\",\n"
+            << "        \"label\": \"" << json_escape(an.label) << "\",\n"
             << "        \"polarity\": \"" << scene::to_string(an.polarity) << "\",\n"
+            << "        \"material_code\": \"" << json_escape(an.material.code) << "\",\n"
+            << "        \"material_es\": \"" << json_escape(an.material.name_es) << "\",\n"
+            << "        \"material_en\": \"" << json_escape(an.material.name_en) << "\",\n"
             << std::fixed << std::setprecision(4)
+            << "        \"material_probability\": " << an.material.probability << ",\n"
+            << "        \"estimated_epsr\": " << an.material.estimated_epsr << ",\n"
+            << "        \"color_hex\": \"" << an.material.color_hex() << "\",\n"
             << "        \"depth_m\": " << an.depth_m << ",\n"
             << "        \"radius_x_m\": " << an.radii_m.x << ",\n"
             << "        \"radius_y_m\": " << an.radii_m.y << ",\n"
@@ -452,4 +564,3 @@ void SceneExporter3D::write_auto(
 }
 
 }  // namespace gpr3d::io
-

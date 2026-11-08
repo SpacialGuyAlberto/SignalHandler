@@ -60,6 +60,7 @@ endif()
 # Core library
 add_library(gpr3d
     src/geo/crs_transform.cpp
+    src/geo/material_db.cpp
     src/geo/trajectory_sync.cpp
     src/io/gps_reader.cpp
     src/io/reader.cpp
@@ -71,6 +72,7 @@ add_library(gpr3d
     src/dsp/fft.cpp
     src/dsp/signal_processor.cpp
     src/dsp/interpreter.cpp
+    src/dsp/soil_inversion.cpp
     src/dsp/object_transformer.cpp
     src/viz/fluctuation_plotter.cpp
     src/viz/gl_viewer.cpp
