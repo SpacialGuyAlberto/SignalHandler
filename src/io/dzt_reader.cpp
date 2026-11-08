@@ -133,6 +133,8 @@ BScan DztReader::read(const std::filesystem::path& path, const ReadOptions& opti
             bscan.metadata.antenna_freq_mhz = std::stod(m[1].str()) * 1000.0;
         } else if (up_ant.find("NX25") != std::string::npos || up_ant.find("52600") != std::string::npos) {
             bscan.metadata.antenna_freq_mhz = 2600.0;
+        } else if (up_ant.find("FLEX") != std::string::npos) {
+            bscan.metadata.antenna_freq_mhz = 1500.0;
         } else if (up_ant.find("NX15") != std::string::npos || up_ant.find("5100") != std::string::npos) {
             bscan.metadata.antenna_freq_mhz = 1600.0;
         } else if (up_ant.find("3101") != std::string::npos) {
