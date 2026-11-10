@@ -1,0 +1,18 @@
+digraph Geo {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=9, shape=box, style="rounded,filled", penwidth=1.2];
+    edge [color="#1A73E8", penwidth=1.2, arrowhead="vee"];
+
+    WGS [label="WGS84 Geodésico\n(φ: Lat, λ: Lon, h: Alt)\nElipsoide a=6378137m", fillcolor="#E8F0FE", color="#1A73E8"];
+    ECEF [label="ECEF Cartesiano\n(X, Y, Z)\nGeocéntrico Global", fillcolor="#E8F0FE", color="#1A73E8"];
+    ENU [label="ENU Local Tangente\n(East, North, Up)\nOrigen local (φ₀, λ₀, h₀)", fillcolor="#E6F4EA", color="#137333"];
+    UTM [label="Proyección UTM\n(Zona, Banda, E_utm, N_utm)\nTransversa de Mercator", fillcolor="#E6F4EA", color="#137333"];
+    ANT [label="Corrección Lever-Arm\nAntena GPR corregida\ncon rumbo (heading) ψ", fillcolor="#FEF7E0", color="#B06000"];
+
+    WGS -> ECEF [label=" N(φ), e²"];
+    ECEF -> ENU [label=" Matriz R(φ₀, λ₀)"];
+    WGS -> UTM [label=" Reducción Gauss-Krüger"];
+    ENU -> ANT [label=" Δx sinψ + Δy cosψ"];
+    UTM -> ANT [label=" Offset local"];
+}

@@ -1,0 +1,420 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{color}
+\usepackage{hyperref}
+\usepackage{url}
+
+% Configuracion de margenes estandar A4
+\setlength{\textwidth}{16.5cm}
+\setlength{\textheight}{24.0cm}
+\setlength{\oddsidemargin}{0.0cm}
+\setlength{\evensidemargin}{0.0cm}
+\setlength{\topmargin}{-1.2cm}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+% Definicion de colores para enlaces y destacados
+\definecolor{navyblue}{rgb}{0.05, 0.15, 0.45}
+\definecolor{darkgreen}{rgb}{0.08, 0.40, 0.12}
+\definecolor{darkred}{rgb}{0.55, 0.10, 0.10}
+\definecolor{codegray}{rgb}{0.25, 0.25, 0.28}
+\definecolor{boxbg}{rgb}{0.96, 0.97, 0.99}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=navyblue,
+    citecolor=darkgreen,
+    urlcolor=navyblue,
+    pdftitle={Fundamentos Fisico-Matematicos e Ingenieria en C++20 para GPR (gpr3d)},
+    pdfauthor={Proyecto SignalHandler / gpr3d}
+}
+
+
+\renewcommand{\labelitemi}{$\bullet$}
+\renewcommand{\labelitemii}{$-$}
+\renewcommand{\labelitemiii}{$\ast$}
+\renewcommand{\labelitemiv}{$\cdot$}
+
+\begin{document}
+
+% -----------------------------------------------------------------------------
+% PORTADA / ENCABEZADO
+% -----------------------------------------------------------------------------
+\begin{center}
+    {\LARGE \textbf{Fundamentos F{\'\i}sico-Matem{\'a}ticos e Ingenier{\'\i}a de Software en C++20 para Georradar (GPR / GDR)}}\\[0.4cm]
+    {\Large \textbf{Gu{\'\i}a Te{\'o}rica Integral del Motor \texttt{gpr3d} y Mapeo Curricular a Literatura Universitaria en Alem{\'a}n}}\\[0.3cm]
+    \rule{\textwidth}{1.2pt}\\[0.2cm]
+    \textbf{Proyecto:} \texttt{SignalHandler} (\textit{gpr3d}) \quad $\bullet$ \quad \textbf{Fecha:} Noviembre 2026 \quad $\bullet$ \quad \textbf{Versi{\'o}n:} 2.0 (C++20)\\
+    \rule{\textwidth}{0.6pt}
+\end{center}
+
+\vspace{0.2cm}
+
+\tableofcontents
+
+\vspace{0.5cm}
+\hrule
+\vspace{0.5cm}
+
+% -----------------------------------------------------------------------------
+% SECCION 1: INTRODUCCION Y ARQUITECTURA
+% -----------------------------------------------------------------------------
+\section{Introducci{\'o}n y Arquitectura del Motor \texttt{gpr3d}}
+
+El proyecto \texttt{gpr3d} (\texttt{SignalHandler}) constituye una suite geof{\'\i}sica y de procesamiento de se{\~n}ales implementada en \textbf{C++20 est{\'a}ndar}. Su prop{\'o}sito es resolver de extremo a extremo la cadena de transformaci{\'o}n de datos de \textbf{Georradar (Ground Penetrating Radar, GPR / Ground Discovering Radar, GDR)}: desde la adquisici{\'o}n de trenes de pulso en bruto (\textit{raw A-scans/B-scans}) en formatos comerciales binarios propietarios (\texttt{.dzt}, \texttt{.sgy}, \texttt{.rd3}), hasta la \textbf{inversi{\'o}n geof{\'\i}sica de par{\'a}metros del suelo}, la \textbf{reconstrucci{\'o}n sem{\'a}ntica de objetos 3D} (tuber{\'\i}as, conductos de fibra {\'o}ptica, interfaces de pavimento) y la generaci{\'o}n de anal{\'\i}ticas de fluctuaci{\'o}n de se{\~n}al en gr{\'a}ficos de alta resoluci{\'o}n y cuadros de mando interactivos WebGL.
+
+\subsection{Cadena de Procesamiento (Pipeline Geof{\'\i}sico)}
+El flujo de datos se articula en cuatro capas f{\'\i}sico-matem{\'a}ticas rigurosamente acopladas:
+\begin{enumerate}
+    \item \textbf{Capa de Ingesta y Decodificaci{\'o}n I/O:} Lectura binaria directa sin copias (\textit{zero-copy views}), gesti{\'o}n expl{\'\i}cita de \textit{endianness} y correcci{\'o}n de brazo de palanca GNSS (\textit{lever-arm}).
+    \item \textbf{Acondicionamiento y Filtrado de Se{\~n}al (DSP):} Eliminaci{\'o}n de componente continua e inductiva (\textit{Dewow}), alineaci{\'o}n de primer arribo (\textit{Time-Zero}), filtrado pasabanda Butterworth de fase cero y compensaci{\'o}n de atenuaci{\'o}n por ganancia SEC.
+    \item \textbf{Inversi{\'o}n Geof{\'\i}sica y Caracterizaci{\'o}n Litol{\'o}gica:}
+    \begin{itemize}
+        \item C{\'a}lculo de velocidad real $v$ y permitividad relativa $\varepsilon_r$ mediante an{\'a}lisis de semblanza de hip{\'e}rbolas de difracci{\'o}n (\textit{Semblance Velocity Analysis}).
+        \item Inversi{\'o}n de reflectancias en interfases normales basada en los coeficientes de Fresnel multicapa.
+        \item Medici{\'o}n de p{\'e}rdidas por disipaci{\'o}n $\alpha$ (dB/m), tangente de p{\'e}rdidas $\tan\delta$ y conductividad aparente $\sigma$ (mS/m) fusionando decaimiento de envolvente y corrimiento espectral del centroide de frecuencia (\textit{Quan-Harris}).
+        \item Clasificaci{\'o}n bayesiana probabil{\'\i}stica frente al cat{\'a}logo geof{\'\i}sico est{\'a}ndar \textbf{ASTM D6432}.
+    \end{itemize}
+    \item \textbf{Transformaci{\'o}n y S{\'\i}ntesis 3D:} Migraci{\'o}n difractiva 2D de Kirchhoff, extrusi{\'o}n geom{\'e}trica de mallas cil{\'\i}ndricas y triangulaci{\'o}n de horizontes hacia formatos Wavefront \texttt{.obj}, Khronos glTF 2.0 binario \texttt{.glb} y GIS \texttt{.geojson}.
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+% SECCION 2: FUNDAMENTOS DE FISICA (PHYSIK)
+% -----------------------------------------------------------------------------
+\section{Fundamentos de F{\'\i}sica aplicados al Georradar (GPR)}
+
+El funcionamiento del georradar se rige por las leyes del electromagnetismo cl{\'a}sico y la propagaci{\'o}n de ondas en medios materiales continuos y heterog{\'e}neos con p{\'e}rdidas.
+
+\subsection{Ecuaciones de Maxwell en Medios Materiales}
+El campo electromagn{\'e}tico en el subsuelo queda descrito por las ecuaciones diferenciales de Maxwell:
+\begin{align}
+    \nabla \cdot \mathbf{D} &= \rho_f \quad &\text{(Ley de Gauss para el campo el{\'e}ctrico)} \\
+    \nabla \cdot \mathbf{B} &= 0 \quad &\text{(Ley de Gauss para el campo magn{\'e}tico)} \\
+    \nabla \times \mathbf{E} &= -\frac{\partial \mathbf{B}}{\partial t} \quad &\text{(Ley de Faraday-Lenz)} \\
+    \nabla \times \mathbf{H} &= \mathbf{J}_f + \frac{\partial \mathbf{D}}{\partial t} \quad &\text{(Ley de Amp{\`e}re-Maxwell)}
+\end{align}
+donde las relaciones constitutivas del medio geol{\'o}gico vinculan los vectores de campo:
+\begin{equation}
+    \mathbf{D} = \varepsilon \mathbf{E} = \varepsilon_0 \varepsilon_r \mathbf{E}, \qquad \mathbf{B} = \mu \mathbf{H} = \mu_0 \mu_r \mathbf{H}, \qquad \mathbf{J}_f = \sigma \mathbf{E}
+\end{equation}
+\begin{itemize}
+    \item $\varepsilon_0 \approx 8.854187 \times 10^{-12} \text{ F/m}$ es la permitividad diel{\'e}ctrica del vac{\'\i}o.
+    \item $\mu_0 = 4\pi \times 10^{-7} \text{ H/m}$ es la permeabilidad magn{\'e}tica del vac{\'\i}o.
+    \item $\varepsilon_r$ es la permitividad diel{\'e}ctrica relativa del suelo (adimensional).
+    \item $\mu_r \approx 1$ para la inmensa mayor{\'\i}a de suelos no ferromagn{\'e}ticos.
+    \item $\sigma$ es la conductividad el{\'e}ctrica aparente del medio en S/m (o mS/m).
+\end{itemize}
+
+\subsection{Ecuaci{\'o}n de Onda y Propagaci{\'o}n en Diel{\'e}ctricos con P{\'e}rdidas}
+Tomando el rotacional de la ley de Faraday y sustituyendo la ley de Amp{\`e}re en un medio homog{\'e}neo sin cargas libres ($\rho_f = 0$):
+\begin{equation}
+    \nabla \times (\nabla \times \mathbf{E}) = \nabla(\nabla \cdot \mathbf{E}) - \nabla^2 \mathbf{E} = -\mu \frac{\partial}{\partial t}(\nabla \times \mathbf{H}) = -\mu \sigma \frac{\partial \mathbf{E}}{\partial t} - \mu \varepsilon \frac{\partial^2 \mathbf{E}}{\partial t^2}
+\end{equation}
+Dado que $\nabla \cdot \mathbf{E} = 0$, obtenemos la \textbf{ecuaci{\'o}n telegr{\'a}fica de onda electromagn{\'e}tica}:
+\begin{equation}
+    \nabla^2 \mathbf{E} - \mu \sigma \frac{\partial \mathbf{E}}{\partial t} - \mu \varepsilon \frac{\partial^2 \mathbf{E}}{\partial t^2} = 0
+\end{equation}
+Para una onda monocrom{\'a}tica arm{\'o}nica temporal $\mathbf{E}(\mathbf{r}, t) = \mathbf{E}_0 e^{j(\omega t - \mathbf{k} \cdot \mathbf{r})}$, la constante de propagaci{\'o}n compleja $\gamma$ viene dada por:
+\begin{equation}
+    \gamma = \alpha + j\beta = \sqrt{j\omega\mu(\sigma + j\omega\varepsilon)} = j\omega\sqrt{\mu\varepsilon}\sqrt{1 - j\frac{\sigma}{\omega\varepsilon}}
+\end{equation}
+donde:
+\begin{itemize}
+    \item $\alpha$ es la \textbf{constante de atenuaci{\'o}n} (en Np/m).
+    \item $\beta$ es la \textbf{constante de fase} o n{\'u}mero de onda (en rad/m).
+    \item $\tan\delta = \frac{\sigma}{\omega\varepsilon} = \frac{\sigma}{2\pi f \varepsilon_0 \varepsilon_r}$ es la \textbf{tangente de p{\'e}rdidas diel{\'e}ctricas} (\textit{loss tangent}).
+\end{itemize}
+
+\subsection{R{\'e}gimen de Bajas P{\'e}rdidas \texorpdfstring{($\tan\delta \ll 1$)}{(tan delta << 1)}}
+En las frecuencias t{\'\i}picas de GPR ($100\text{ MHz} - 2.6\text{ GHz}$) y en suelos con baja o moderada humedad, se cumple la aproximaci{\'o}n de bajas p{\'e}rdidas ($\sigma / (\omega\varepsilon) < 0.2$):
+\begin{equation}
+    \beta \approx \omega \sqrt{\mu_0 \varepsilon_0 \varepsilon_r} = \frac{\omega \sqrt{\varepsilon_r}}{c_0}
+\end{equation}
+La \textbf{velocidad de fase} de propagaci{\'o}n de la se{\~n}al en el subsuelo se simplifica a la f{\'o}rmula fundamental:
+\begin{equation}
+    v = \frac{\omega}{\beta} \approx \frac{c_0}{\sqrt{\varepsilon_r}} \approx \frac{0.299792}{\sqrt{\varepsilon_r}} \text{ m/ns}
+\end{equation}
+La longitud de onda en el medio es $\lambda = \frac{v}{f}$. Esto define el l{\'\i}mite f{\'\i}sico de \textbf{resoluci{\'o}n vertical de Rayleigh}:
+\begin{equation}
+    \Delta z_{\min} \approx \frac{\lambda}{4} = \frac{v}{4 f} = \frac{c_0}{4 f \sqrt{\varepsilon_r}}
+\end{equation}
+y la resoluci{\'o}n horizontal definida por el \textbf{primer radio de Fresnel}:
+\begin{equation}
+    r_F \approx \sqrt{\frac{\lambda z}{2}} + \frac{\lambda}{4}
+\end{equation}
+
+\subsection{Coeficientes de Reflexi{\'o}n de Fresnel y Polaridad de Fase}
+En la interfase plana entre dos medios con permitividades $\varepsilon_{r,1}$ y $\varepsilon_{r,2}$, la impedancia intr{\'\i}nseca de onda es $\eta_i = \sqrt{\frac{\mu_0}{\varepsilon_0 \varepsilon_{r,i}}} = \frac{\eta_0}{\sqrt{\varepsilon_{r,i}}}$, con $\eta_0 \approx 376.73\,\Omega$.
+
+Para incidencia normal sobre la interfase:
+\begin{equation}
+    R = \frac{\eta_2 - \eta_1}{\eta_2 + \eta_1} = \frac{\sqrt{\varepsilon_{r,1}} - \sqrt{\varepsilon_{r,2}}}{\sqrt{\varepsilon_{r,1}} + \sqrt{\varepsilon_{r,2}}}
+\end{equation}
+Despejando la permitividad del estrato inferior conocida la del estrato superior, obtenemos la ley de \textbf{inversi{\'o}n diel{\'e}ctrica multicapa}:
+\begin{equation}
+    \varepsilon_{r,k+1} = \varepsilon_{r,k} \left(\frac{1 - R_k}{1 + R_k}\right)^2
+\end{equation}
+\textbf{Propiedad f{\'\i}sica de polaridad de fase implementada en \texttt{gpr3d}:}
+\begin{itemize}
+    \item Si $\varepsilon_{r,2} > \varepsilon_{r,1}$ (por ejemplo, transici{\'o}n Aire $\to$ Asfalto, o Suelo $\to$ Tuber{\'\i}a Met{\'a}lica donde $\varepsilon_r \to \infty$): $R < 0$, produciendo una \textbf{inversi{\'o}n de fase de $180^\circ$} (pico negativo en el pulso reflejado).
+    \item Si $\varepsilon_{r,2} < \varepsilon_{r,1}$ (por ejemplo, Suelo $\to$ Ducto pl{\'a}stico de fibra vac{\'\i}o con aire $\varepsilon_r \approx 1$ o cavidad): $R > 0$, la onda se refleja \textbf{en fase} (pico positivo).
+\end{itemize}
+
+\subsection{Atenuaci{\'o}n, Conductividad y Corrimiento Espectral (Quan-Harris)}
+La constante de atenuaci{\'o}n te{\'o}rica por p{\'e}rdidas {\'o}hmicas es:
+\begin{equation}
+    \alpha \approx \frac{\sigma}{2} \sqrt{\frac{\mu}{\varepsilon}} \approx \frac{\sigma}{2} \frac{\eta_0}{\sqrt{\varepsilon_r}} \text{ [Np/m]} \implies \alpha_{\text{dB/m}} = 20 \log_{10}(e) \cdot \alpha \approx 8.68589 \cdot \alpha
+\end{equation}
+Despejando la conductividad el{\'e}ctrica aparente del terreno:
+\begin{equation}
+    \sigma \approx \frac{2 \sqrt{\varepsilon_r}}{\eta_0} \alpha_{\text{Np/m}} = \frac{2 \sqrt{\varepsilon_r}}{376.73} \left(\frac{\alpha_{\text{dB/m}}}{8.68589}\right) \text{ S/m}
+\end{equation}
+Adem{\'a}s del decaimiento geom{\'e}trico $1/r$, las altas frecuencias sufren mayor disipaci{\'o}n que las bajas. Siguiendo el modelo geof{\'\i}sico de \textbf{Quan \& Harris (1997)}, el corrimiento hacia abajo del centroide de frecuencia $f_c$ a lo largo de la trayectoria de propagaci{\'o}n $z$ cumple:
+\begin{equation}
+    \frac{df_c}{dz} = -2 \alpha_0 \sigma_f^2
+\end{equation}
+donde $\sigma_f^2$ es la varianza del espectro de potencia y $\alpha_0$ la tasa de absorci{\'o}n espectral. En \texttt{gpr3d}, este efecto se combina con el ajuste de envolvente para cuantificar $\alpha$ de forma independiente a ganancias de hardware pre-aplicadas en campo.
+
+\subsection{Cinem{\'a}tica de la Hip{\'e}rbola de Difracci{\'o}n y Migraci{\'o}n 2D}
+Cuando una antena GPR monost{\'a}tica pasa por encima de un reflector puntual o tubular en $(x_0, z_0)$, la distancia eucl{\'\i}dea antena-blanco es $r(x) = \sqrt{(x - x_0)^2 + z_0^2}$. El tiempo de viaje de ida y vuelta (Two-Way Traveltime, TWT) es:
+\begin{equation}
+    t(x) = \frac{2 r(x)}{v} = \frac{2}{v} \sqrt{(x - x_0)^2 + z_0^2} \implies t(x)^2 = t_0^2 + \frac{4(x - x_0)^2}{v^2}
+\end{equation}
+donde $t_0 = \frac{2 z_0}{v}$ es el tiempo en el {\'a}pice. La curvatura de las alas de la hip{\'e}rbola depende {\'u}nica y exclusivamente de la velocidad real $v$.
+
+La \textbf{Migraci{\'o}n de Kirchhoff en 2D} colapsa estas hip{\'e}rbolas integrando las amplitudes a lo largo de la curva de difracci{\'o}n te{\'o}rica con el factor de oblicuidad $\cos\theta = z_0 / r$:
+\begin{equation}
+    M(x_0, z_0) = \frac{1}{2\pi} \int_{\text{apertura}} \frac{\cos\theta}{\sqrt{v r(x)}} \, \partial_t^{1/2} s\left(x, t = \frac{2 r(x)}{v}\right) dx
+\end{equation}
+
+% -----------------------------------------------------------------------------
+% SECCION 3: FUNDAMENTOS DE MATEMATICAS (MATHEMATIK)
+% -----------------------------------------------------------------------------
+\section{Fundamentos de Matem{\'a}ticas aplicados}
+
+\subsection{An{\'a}lisis de Fourier y Filtrado Pasabanda de Fase Cero}
+El procesamiento espectral de la traza $s(t)$ se realiza mediante la Transformada Discreta de Fourier (DFT):
+\begin{equation}
+    S(f_k) = \sum_{n=0}^{N-1} s(t_n) e^{-j 2\pi k n / N}, \qquad k = 0, \dots, N-1
+\end{equation}
+Para evitar distorsi{\'o}n de fase que desplace la posici{\'o}n temporal de los reflectores, el filtro Butterworth de orden $N_B$:
+\begin{equation}
+    |H(f)|^2 = \frac{1}{1 + \left(\frac{f_{\text{low}}}{f}\right)^{2 N_B}} \cdot \frac{1}{1 + \left(\frac{f}{f_{\text{high}}}\right)^{2 N_B}}
+\end{equation}
+se aplica de forma sim{\'e}trica en el dominio de la frecuencia mediante convoluci{\'o}n circular zero-phase linealizada con \textit{zero-padding} al doble de muestras ($N_{\text{fft}} \ge 2 N$).
+
+\subsection{Transformada de Hilbert y Se{\~n}al Anal{\'\i}tica Compleja}
+La transformada de Hilbert $\mathcal{H}\{s(t)\} = \tilde{s}(t)$ introduce un desfase constante de $-90^\circ$ para frecuencias positivas y $+90^\circ$ para frecuencias negativas:
+\begin{equation}
+    \tilde{s}(t) = \frac{1}{\pi} \text{P.V.} \int_{-\infty}^\infty \frac{s(\tau)}{t - \tau} d\tau \iff \mathcal{F}\{\tilde{s}(t)\} = -j \text{sgn}(f) S(f)
+\end{equation}
+A partir de ella se construye la \textbf{se{\~n}al anal{\'\i}tica}:
+\begin{equation}
+    z(t) = s(t) + j \tilde{s}(t) = A(t) e^{j \phi(t)}
+\end{equation}
+\begin{itemize}
+    \item \textbf{Envolvente Instant{\'a}nea (Reflexi{\'o}n aparente):} $A(t) = |z(t)| = \sqrt{s(t)^2 + \tilde{s}(t)^2}$.
+    \item \textbf{Fase Instant{\'a}nea:} $\phi(t) = \text{atan2}(\tilde{s}(t), s(t)) \in [-\pi, \pi]$.
+    \item \textbf{Frecuencia Instant{\'a}nea:} $\omega(t) = \frac{d}{dt} \text{unwrap}(\phi(t))$.
+\end{itemize}
+
+\subsection{An{\'a}lisis de Coherencia por Semblanza (Neidell \& Taner, 1971)}
+Para determinar la velocidad real $v^*$ alrededor de un {\'a}pice $(x_0, t_0)$, se define una ventana temporal $[-M, +M]$ y se eval{\'u}a la coherencia multitraza sobre las $K$ trazas vecinas que caen dentro del cono de apertura:
+\begin{equation}
+    S(v) = \frac{\sum_{w=-M}^{M} \left[ \sum_{i=1}^K s_i\left(t_i(v) + w \Delta t\right) \right]^2}{K \sum_{w=-M}^{M} \sum_{i=1}^K \left[ s_i\left(t_i(v) + w \Delta t\right) \right]^2} \quad \in [0, 1]
+\end{equation}
+donde $t_i(v) = \frac{2}{v} \sqrt{(x_i - x_0)^2 + z_0(v)^2}$. Si la velocidad de prueba $v$ coincide con la del medio, las se{\~n}ales apilan en fase constructiva y $S(v) \to 1$.
+
+\textbf{Refinamiento parab{\'o}lico sub-rejilla:} Evaluada la semblanza en una malla discreta $\{v_g\}$ con paso $\Delta v$, el {\'a}pice discreto $g^*$ se interpola anal{\'\i}ticamente:
+\begin{equation}
+    \delta = \frac{1}{2} \frac{S_{g^*-1} - S_{g^*+1}}{S_{g^*-1} - 2 S_{g^*} + S_{g^*+1}} \implies v^* = v_{g^*} + \delta \Delta v
+\end{equation}
+
+\subsection{Geodesia Espacial: WGS84, ECEF, ENU y Proyecci{\'o}n UTM}
+Para ubicar con precisi{\'o}n centim{\'e}trica los objetos detectados en el espacio cartogr{\'a}fico global:
+\begin{enumerate}
+    \item \textbf{Elipsoide WGS84:} Semieje mayor $a = 6378137.0\text{ m}$, achatamiento $f = 1/298.257223563$, primera excentricidad al cuadrado $e^2 = 2f - f^2$.
+    \item \textbf{Geod{\'e}sicas $(\varphi, \lambda, h) \to$ ECEF $(X, Y, Z)$:}
+    \begin{equation}
+        N(\varphi) = \frac{a}{\sqrt{1 - e^2 \sin^2\varphi}}, \quad \begin{cases} X = (N + h)\cos\varphi\cos\lambda \\ Y = (N + h)\cos\varphi\sin\lambda \\ Z = (N(1 - e^2) + h)\sin\varphi \end{cases}
+    \end{equation}
+    \item \textbf{ECEF $\to$ ENU Local (East-North-Up):}
+    \begin{equation}
+        \begin{bmatrix} E \\ N \\ U \end{bmatrix} = \begin{bmatrix} -\sin\lambda_0 & \cos\lambda_0 & 0 \\ -\sin\varphi_0\cos\lambda_0 & -\sin\varphi_0\sin\lambda_0 & \cos\varphi_0 \\ \cos\varphi_0\cos\lambda_0 & \cos\varphi_0\sin\lambda_0 & \sin\varphi_0 \end{bmatrix} \begin{bmatrix} X - X_0 \\ Y - Y_0 \\ Z - Z_0 \end{bmatrix}
+    \end{equation}
+    \item \textbf{Correcci{\'o}n de Brazo de Palanca (Lever-Arm):} Si la antena est{\'a} desplazada respecto a la antena GPS una distancia frontal $\Delta x$, lateral $\Delta y$ y vertical $\Delta z$ con rumbo azimutal $\psi$:
+    \begin{equation}
+        E_{\text{ant}} = E_{\text{GPS}} + \Delta x \sin\psi + \Delta y \cos\psi, \quad N_{\text{ant}} = N_{\text{GPS}} + \Delta x \cos\psi - \Delta y \sin\psi
+    \end{equation}
+\end{enumerate}
+
+\subsection{Geometr{\'\i}a Diferencial 3D y Generaci{\'o}n de Mallas Tubulares}
+Para generar la superficie tubular continua de una tuber{\'\i}a con radio $r$ alrededor de una poligonal 3D $\{ \mathbf{p}_k \}$:
+\begin{equation}
+    \mathbf{T}_k = \frac{\mathbf{p}_{k+1} - \mathbf{p}_k}{\|\mathbf{p}_{k+1} - \mathbf{p}_k\|}, \quad \mathbf{N}_k = \frac{\mathbf{T}_k \times \hat{\mathbf{z}}}{\|\mathbf{T}_k \times \hat{\mathbf{z}}\|}, \quad \mathbf{B}_k = \mathbf{T}_k \times \mathbf{N}_k
+\end{equation}
+Los $M$ v{\'e}rtices del anillo circular en el {\'\i}ndice angular $j$ vienen dados por:
+\begin{equation}
+    \mathbf{v}_{k, j} = \mathbf{p}_k + r \left( \cos\theta_j \mathbf{N}_k + \sin\theta_j \mathbf{B}_k \right), \quad \theta_j = \frac{2\pi j}{M}
+\end{equation}
+
+% -----------------------------------------------------------------------------
+% SECCION 4: INGENIERIA DE SOFTWARE EN C++20
+% -----------------------------------------------------------------------------
+\section{Ingenier{\'\i}a de Software y C++20 Moderno}
+
+El n{\'u}cleo del motor est{\'a} construido bajo principios de rendimiento m{\'a}ximo, cero copias redundantes y correcci{\'o}n formal de tipos.
+
+\subsection{T{\'e}cnicas de C++20 Empleadas}
+\begin{itemize}
+    \item \textbf{\texttt{std::span<T>} para Vistas de Memoria No Propietarias:} Permite pasar ventanas temporales de trazas, buffers de muestras y bloques de v{\'e}rtices entre funciones de procesamiento sin incurrir en alocaciones din{\'a}micas ni copias en memoria heap.
+    \item \textbf{Biblioteca Num{\'e}rica \texttt{<}numbers\texttt{>}:} Uso de constantes normalizadas en coma flotante con precisi{\'o}n de m{\'a}quina (\texttt{std::numbers::pi}).
+    \item \textbf{Inicializadores Designados (\textit{Designated Initializers}):} Claridad declarativa en configuraciones de procesamiento complejas (\texttt{ProcessingConfig\{ .enable\_dewow = true, \dots \}}).
+    \item \textbf{Sem{\'a}ntica de Movimiento (\texttt{std::move}) y Reserva de Capacidad:} Las estructuras que contienen perfiles multicanal masivos (\texttt{std::vector<AScan>}) utilizan \texttt{reserve()} anticipado y transferencia por movimiento de recursos para evitar realocaciones del vector.
+    \item \textbf{Gesti{\'o}n de Opciones con \texttt{std::optional<T>}:} Modelado formal de magnitudes que pueden faltar en los ficheros crudos (fijaciones satelitales GNSS, alturas elipsoidales o par{\'a}metros de ganancia de f{\'a}brica).
+\end{itemize}
+
+\subsection{I/O Binario de Bajo Nivel y Gesti{\'o}n de Endianness}
+Los formatos de georradar son binarios y heterog{\'e}neos:
+\begin{itemize}
+    \item \textbf{GSSI RADAN (\texttt{.dzt}):} Cabecera de 1024 bytes codificada en Little-Endian. Manejo de enteros con signo y sin signo de 8, 16 y 32 bits, desentrelazado multicanal autom{\'a}tico (\texttt{rh\_nchan}) y decodificaci{\'o}n de antenas propietarias (\texttt{NX15}, \texttt{D50800}, \texttt{FlexNX}).
+    \item \textbf{SEG-Y (Rev 1 / Rev 2):} Conversi{\'o}n precisa de coma flotante de 32 bits \textbf{IBM 360} (base 16 con exponente sesgado a 64 y mantisa fraccionaria sin bit impl{\'\i}cito) a est{\'a}ndar IEEE 754.
+    \item \textbf{Gesti{\'o}n de Endianness:} Detecci{\'o}n en tiempo de compilaci{\'o}n con \texttt{std::endian::native} y funciones de intercambio de bytes (\textit{byte-swapping}) mediante m{\'a}scaras de bits r{\'a}pidas.
+\end{itemize}
+
+\subsection{Serializaci{\'o}n y Empaquetado Binario glTF 2.0 (\texttt{.glb})}
+El exportador 3D genera directamente especificaciones binarias Khronos glTF 2.0 sin depender de librer{\'\i}as externas pesadas:
+\begin{enumerate}
+    \item \textbf{Cabecera GLB (12 bytes):} N{\'u}mero m{\'a}gico \texttt{0x46546C67} (\texttt{"glTF"}), versi{\'o}n \texttt{2} y longitud total del fichero.
+    \item \textbf{Chunk JSON (0x4E4F534A):} Descriptor de nodos, c{\'a}maras, mallas, materiales PBR geol{\'o}gicos y metadatos con relleno de espacios hasta m{\'u}ltiplos de 4 bytes.
+    \item \textbf{Chunk BIN (0x004E4942):} Empaquetado binario continuo alineado de coordenadas de v{\'e}rtice \texttt{VEC3} (IEEE float), normales unitarias \texttt{VEC3} e {\'\i}ndices triangulares \texttt{SCALAR} (\texttt{uint32\_t}).
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+% SECCION 5: MAPEO A LIBROS DE TEXTO EN ALEMAN
+% -----------------------------------------------------------------------------
+\section{Mapeo Curricular a Recursos Universitarios en Alem{\'a}n}
+
+A continuaci{\'o}n se detalla la correspondencia exacta entre cada m{\'o}dulo implementado en \texttt{gpr3d} y los cap{\'\i}tulos de los manuales est{\'a}ndar alemanes solicitados.
+
+\subsection{1. Tilo Arens et al. --- \textit{Mathematik} (Springer Spektrum)}
+Este manual de referencia enciclop{\'e}dico (Arens, Hettlich, Karpfinger, Kroll, Schweigert, Wanka) cubre todas las herramientas anal{\'\i}ticas utilizadas:
+\begin{itemize}
+    \item \textbf{Kapitel 7 \& 8: Vektoren im $\mathbb{R}^n$, Matrizen und lineare Gleichungssysteme}
+    \begin{itemize}
+        \item Fundamento de las transformaciones de coordenadas tridimensionales, rotaciones espaciales, producto cruz para el c{\'a}lculo de vectores normales y resoluci{\'o}n del sistema de Frenet para las mallas tubulares.
+    \end{itemize}
+    \item \textbf{Kapitel 15 \& 16: Komplexe Zahlen und Funktionen}
+    \begin{itemize}
+        \item Representaci{\'o}n de amplitudes y fases complejas en el dominio fasorial, base de la se{\~n}al anal{\'\i}tica y la transformada de Hilbert.
+    \end{itemize}
+    \item \textbf{Kapitel 18: Fourier-Reihen und Fourier-Transformationen}
+    \begin{itemize}
+        \item Fundamentos de la Transformada Discreta de Fourier (DFT/FFT), teorema de convoluci{\'o}n, conservaci{\'o}n de la energ{\'\i}a de Parseval y teor{\'\i}a de filtros paso banda.
+    \end{itemize}
+    \item \textbf{Kapitel 24 \& 25: Kurven, Fl{\"a}chen und Vektoranalysis}
+    \begin{itemize}
+        \item Operadores diferenciales espaciales ($\nabla$, $\operatorname{grad}$, $\operatorname{div}$, $\operatorname{rot}$), derivaci{\'o}n de la ecuaci{\'o}n telegr{\'a}fica de onda y parametrizaci{\'o}n de superficies para mallas poligonales.
+    \end{itemize}
+    \item \textbf{Kapitel 28: Numerische Verfahren und Ausgleichsrechnung}
+    \begin{itemize}
+        \item M{\'e}todo de los m{\'\i}nimos cuadrados (\textit{Methode der kleinsten Quadrate}) para la regresi{\'o}n de atenuaci{\'o}n, interpolaci{\'o}n parab{\'o}lica sub-rejilla en la semblanza e integraci{\'o}n num{\'e}rica en la migraci{\'o}n.
+    \end{itemize}
+\end{itemize}
+
+\subsection{2. Paul A. Tipler, Gene Mosca --- \textit{Physik f{\"u}r Wissenschaftler und Ingenieure} (Springer)}
+El texto cl{\'a}sico de f{\'\i}sica universitaria (edici{\'o}n en alem{\'a}n de Heinemann \& Zillgitt):
+\begin{itemize}
+    \item \textbf{Kapitel 15 \& 16: Schwingungen und Wellen}
+    \begin{itemize}
+        \item Mecanismo de superposici{\'o}n de ondas, atenuaci{\'o}n por p{\'e}rdidas, velocidad de grupo frente a velocidad de fase y dispersi{\'o}n geom{\'e}trica.
+    \end{itemize}
+    \item \textbf{Kapitel 24 \& 25: Elektrisches Potential, Kapazit{\"a}t und Dielektrika}
+    \begin{itemize}
+        \item F{\'\i}sica de la permitividad relativa $\varepsilon_r$, polarizaci{\'o}n de la materia y almacenamiento de energ{\'\i}a electrost{\'a}tica en el subsuelo.
+    \end{itemize}
+    \item \textbf{Kapitel 28 \& 29: Magnetfelder, Induktion und Wechselstromkreise}
+    \begin{itemize}
+        \item Ecuaciones de inducci{\'o}n, corrientes de conducci{\'o}n frente a corrientes de desplazamiento de Maxwell y comportamiento de la impedancia del medio.
+    \end{itemize}
+    \item \textbf{Kapitel 30: Elektromagnetische Wellen}
+    \begin{itemize}
+        \item Derivaci{\'o}n completa de las ecuaciones de onda a partir de Maxwell, vector de Poynting (densidad de flujo de energ{\'\i}a) e impedancia caracter{\'\i}stica del vac{\'\i}o ($\eta_0 \approx 377\,\Omega$).
+    \end{itemize}
+    \item \textbf{Kapitel 31 \& 32: Lichtausbreitung, Reflexion und Brechung}
+    \begin{itemize}
+        \item Ley de refracci{\'o}n de Snellius, deducci{\'o}n de las f{\'o}rmulas de Fresnel para coeficientes de reflexi{\'o}n en interfases y salto de fase de $180^\circ$ en reflexi{\'o}n diel{\'e}ctrica externa.
+    \end{itemize}
+\end{itemize}
+
+\subsection{3. Ulrich Breymann --- \textit{C++ professionell anwenden} (Carl Hanser Verlag)}
+El manual m{\'a}s riguroso de habla alemana sobre programaci{\'o}n profesional en C++20 (Breymann):
+\begin{itemize}
+    \item \textbf{Kapitel 2--4: Elementare Datentypen, Speicherlayout und Zeiger}
+    \begin{itemize}
+        \item Organizaci{\'o}n de memoria en Stack y Heap, alineaci{\'o}n de estructuras en bytes (\textit{byte alignment}) para cabeceras DZT/SEG-Y y representaci{\'o}n IEEE 754.
+    \end{itemize}
+    \item \textbf{Kapitel 7 \& 8: Klassen, Operatoren und Move-Semantik}
+    \begin{itemize}
+        \item Dise{\~n}o de tipos de valor RAII (\textit{Resource Acquisition Is Initialization}), implementaci{\'o}n de constructores de movimiento \texttt{noexcept} para procesar miles de trazas con cero copias.
+    \end{itemize}
+    \item \textbf{Kapitel 11: Modernes C++20: std::span, Concepts und die Ranges-Bibliothek}
+    \begin{itemize}
+        \item Uso de \texttt{std::span} para construir vistas deslizantes sobre buffers de se{\~n}al sin p{\'e}rdida de rendimiento ni riesgo de desbordamiento.
+    \end{itemize}
+    \item \textbf{Kapitel 13 \& 14: Die Standardbibliothek (STL) und Algorithmen}
+    \begin{itemize}
+        \item Uso idiop{\'a}tico de \texttt{std::nth\_element} para el filtro de mediana en complejidad $O(N)$, \texttt{std::sort}, constantes matem{\'a}ticas con \texttt{<}numbers\texttt{>} y operaciones vectoriales con \texttt{<}numeric\texttt{>}.
+    \end{itemize}
+    \item \textbf{Kapitel 16: Datei- und Stream-Verarbeitung (Bin{\"a}re Ein-/Ausgabe)}
+    \begin{itemize}
+        \item T{\'e}cnicas robustas de I/O binario en bloques con \texttt{std::ifstream::read}, manipulaci{\'o}n de rutas portables mediante \texttt{std::filesystem} y detecci{\'o}n de fin de fichero.
+    \end{itemize}
+    \item \textbf{Kapitel 18: Interoperabilit{\"a}t mit C-Bibliotheken}
+    \begin{itemize}
+        \item Encapsulaci{\'o}n segura de interfaces nativas en C mediante punteros inteligentes y llamadas RAII (utilizado para enlazar FFTW3 y Cairo en \texttt{gpr3d}).
+    \end{itemize}
+\end{itemize}
+
+\subsection{4. Bibliograf{\'\i}a Geof{\'\i}sica y Geod{\'e}sica Complementaria en Alem{\'a}n}
+Para profundizar en las f{\'o}rmulas geod{\'e}sicas y de radar de subsuelo aplicadas en Alemania y la Uni{\'o}n Europea:
+\begin{itemize}
+    \item \textbf{Kn{\"o}del, Krummel, Lange (Hrsg.):} \textit{Handbuch zur Erkundung des Untergrundes von Deponien und Altlasten: Band 3: Geophysik}. Springer-Verlag. (Manual de referencia del servicio geol{\'o}gico alem{\'a}n BGR sobre Georadar, m{\'e}todos electromagn{\'e}ticos y permitividades t{\'\i}picas de suelos).
+    \item \textbf{Heck, Bernhard:} \textit{Rechenverfahren und Modellbildungen in der Ingenieurgeod{\"a}sie}. Wichmann Verlag. (Tratamiento matem{\'a}tico exacto de transformaciones WGS84, ECEF, sistemas locales topoc{\'e}ntricos y proyecciones conformes Gau{\ss}-Kr{\"u}ger / UTM).
+\end{itemize}
+
+% -----------------------------------------------------------------------------
+% SECCION 6: TABLA SINTETICA DE PROPIEDADES ASTM D6432
+% -----------------------------------------------------------------------------
+\section{Cat{\'a}logo Geof{\'\i}sico de Referencia (ASTM D6432)}
+
+El clasificador bayesiano de \texttt{gpr3d} (\texttt{MaterialDatabase}) utiliza la siguiente tabla de constantes electromagn{\'e}ticas calibrada seg{\'u}n la norma ASTM:
+
+\vspace{0.3cm}
+\begin{center}
+{\footnotesize \begin{tabular}{|p{3.8cm}|c|c|c|p{4.2cm}|}
+\hline
+\textbf{Material Subterr{\'a}neo} & $\boldsymbol{\varepsilon_r}$ & $\boldsymbol{v}$ \textbf{(m/ns)} & $\boldsymbol{\sigma}$ \textbf{(mS/m)} & \textbf{Color PBR Representativo} \\
+\hline
+Aire / Cavidad vac{\'\i}a & $1.0 - 1.2$ & $0.28 - 0.30$ & $< 0.05$ & Cian transl{\'u}cido (\#4DE0F5) \\
+Asfalto seco (Rodadura) & $3.0 - 5.0$ & $0.13 - 0.17$ & $0.05 - 2.0$ & Gris antracita (\#383D47) \\
+Hormig{\'o}n seco (Losa) & $5.0 - 7.5$ & $0.11 - 0.13$ & $1.5 - 10.0$ & Gris cemento (\#9EA6AD) \\
+Hormig{\'o}n h{\'u}medo / Armado & $8.0 - 12.0$ & $0.09 - 0.11$ & $10.0 - 50.0$ & Gris plomo (\#707D8C) \\
+Grava compactada / Base & $4.0 - 6.2$ & $0.12 - 0.15$ & $0.2 - 4.5$ & Ocre grava (\#C79E57) \\
+Arena seca (Relleno) & $3.5 - 6.0$ & $0.12 - 0.16$ & $0.05 - 2.5$ & Arena clara (\#E0C270) \\
+Roca consolidada (Caliza) & $5.0 - 8.5$ & $0.10 - 0.13$ & $0.2 - 4.0$ & Roca caliza (\#948C80) \\
+Limo / Suelo franco & $7.0 - 12.5$ & $0.08 - 0.11$ & $3.5 - 32.0$ & Marr{\'o}n limo (\#996E42) \\
+Arena saturada / Fre{\'a}tico & $12.0 - 22.0$ & $0.06 - 0.09$ & $5.0 - 45.0$ & Verde h{\'u}medo (\#758C6B) \\
+Arcilla pl{\'a}stica h{\'u}meda & $15.0 - 35.0$ & $0.05 - 0.08$ & $35.0 - 300.0$ & Terracota arcilla (\#7A422E) \\
+Agua dulce & $\approx 80.0$ & $0.033$ & $5.0 - 60.0$ & Azul profundo (\#2B5999) \\
+Ducto PVC / PEAD (Fibra) & $2.2 - 3.2$ & $0.17 - 0.20$ & Diel{\'e}ctrico & Verde esmeralda (\#1AE096) \\
+Tuber{\'\i}a met{\'a}lica (PEC) & $\to \infty$ ($R=-1$) & $0.00$ & Conductor & Rojo met{\'a}lico (\#EB3D33) \\
+\hline
+\end{tabular}}
+\end{center}
+\vspace{0.3cm}
+
+\section{Conclusi{\'o}n}
+El sistema \texttt{gpr3d} combina la precisi{\'o}n matem{\'a}tica rigurosa del procesamiento digital de se{\~n}ales con la f{\'\i}sica electromagn{\'e}tica de ondas en diel{\'e}ctricos y los est{\'a}ndares modernos de C++20. Esta s{\'\i}ntesis permite una transici{\'o}n transparente desde la teor{\'\i}a geof{\'\i}sica formal hasta la ejecuci{\'o}n en tiempo real sobre datos de radar industriales de campo.
+
+\end{document}

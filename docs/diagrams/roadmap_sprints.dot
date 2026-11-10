@@ -1,0 +1,42 @@
+digraph Roadmap {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    nodesep=0.4;
+    ranksep=0.4;
+
+    node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", penwidth=1.5];
+    edge [color="#1A73E8", penwidth=1.5, arrowhead="vee"];
+
+    subgraph cluster_fase1 {
+        label = "FASE I: Fundamentos & Adquisición";
+        fontname="Helvetica-Bold"; fontsize=11; color="#B0BEC5"; style="dashed,rounded"; fillcolor="#F8F9FA";
+        S1 [label="Sprint 1: Núcleo, Memoria & Endianness\n• Flotante IEEE 754 vs IBM 360\n• Bitwise & std::endian\n• Arens Kap. 1, 28 | Breymann Kap. 2, 3", fillcolor="#E8F0FE", color="#1A73E8"];
+        S2 [label="Sprint 2: Geodesia WGS84, ECEF, ENU & UTM\n• Matrices ortogonales & Lever-Arm\n• Arens Kap. 7, 8 | Tipler Kap. 3 | Breymann Kap. 7", fillcolor="#E8F0FE", color="#1A73E8"];
+        S3 [label="Sprint 3: Ingesta I/O GSSI RADAN & SEG-Y\n• Parsing binario DZT 8/16/32-bit\n• Clases AScan y BScan (RAII)\n• Tipler Kap. 15 | Breymann Kap. 16", fillcolor="#E8F0FE", color="#1A73E8"];
+        S1 -> S2 -> S3;
+    }
+
+    subgraph cluster_fase2 {
+        label = "FASE II: Procesamiento de Señales (DSP)";
+        fontname="Helvetica-Bold"; fontsize=11; color="#B0BEC5"; style="dashed,rounded"; fillcolor="#F8F9FA";
+        S4 [label="Sprint 4: Acondicionamiento DSP & Filtros\n• Dewow sustractivo & Time-Zero\n• Butterworth pasabanda fase cero (FFT)\n• Arens Kap. 18 | Tipler Kap. 28 | Breymann Kap. 11, 18", fillcolor="#E6F4EA", color="#137333"];
+        S5 [label="Sprint 5: Transformada de Hilbert & Envolvente\n• Señal analítica compleja z(t)\n• Amplitud instantánea A(t) & Fase\n• Arens Kap. 18 | Tipler Kap. 15 | Breymann Kap. 14", fillcolor="#E6F4EA", color="#137333"];
+        S3 -> S4 -> S5;
+    }
+
+    subgraph cluster_fase3 {
+        label = "FASE III: Inversión Geofísica & Geometría 3D";
+        fontname="Helvetica-Bold"; fontsize=11; color="#B0BEC5"; style="dashed,rounded"; fillcolor="#F8F9FA";
+        S6 [label="Sprint 6: Inversión de Suelo (Semblanza & Fresnel)\n• Ajuste hiperbólico de velocidad v(x,t)\n• Inversión multicapa de Fresnel R\n• Base de datos litológica ASTM D6432\n• Arens Kap. 28 | Tipler Kap. 30-32 | Breymann Kap. 13", fillcolor="#FEF7E0", color="#B06000"];
+        S7 [label="Sprint 7: Migración Kirchhoff 2D & Mallas 3D\n• Suma de Kirchhoff en apertura\n• Triedro de Frenet-Serret para tubos 3D\n• Arens Kap. 24, 25 | Tipler Kap. 15 | Breymann Kap. 7, 8", fillcolor="#FEF7E0", color="#B06000"];
+        S5 -> S6 -> S7;
+    }
+
+    subgraph cluster_fase4 {
+        label = "FASE IV: Visualización & Entrega";
+        fontname="Helvetica-Bold"; fontsize=11; color="#B0BEC5"; style="dashed,rounded"; fillcolor="#F8F9FA";
+        S8 [label="Sprint 8: glTF 2.0 Binary, GeoJSON & WebGL\n• Serialización de buffers binarios .glb\n• Geometrías GIS 3D georreferenciadas\n• Dashboard Web interactivo Three.js\n• Arens Kap. 7 | Tipler Kap. 31 | Breymann Kap. 16", fillcolor="#FCE8E6", color="#C5221F"];
+        S7 -> S8;
+    }
+}

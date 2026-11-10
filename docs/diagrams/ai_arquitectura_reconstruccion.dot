@@ -1,0 +1,43 @@
+digraph AI_Arch {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=9, shape=box, style="rounded,filled", penwidth=1.2];
+    edge [color="#1A73E8", penwidth=1.2, arrowhead="vee"];
+
+    BSCAN [label="B-Scan Migrado
++ Envolvente Hilbert", fillcolor="#ECEFF1", color="#607D8B"];
+    ROI [label="GPR-DetNet (Red 1)
+Detector de ROIs 3D
+[x_min, x_max, t0, t1]", fillcolor="#E8F0FE", color="#1A73E8"];
+    PARCH [label="Normalización Métrica
+Volumen Local V(x,y,z)
++ Contexto (eps_r, v)", fillcolor="#E8F0FE", color="#1A73E8"];
+    
+    subgraph cluster_onnx {
+        label="Inferencia C++20 (ONNX Runtime)"; fontname="Helvetica-Bold"; fontsize=10;
+        fillcolor="#F8F9FA"; color="#137333"; style="rounded,dashed";
+        ENC [label="3D ResNet Encoder
+Extrae features espaciales", fillcolor="#E6F4EA", color="#137333"];
+        LAT [label="Vector Latente
+z in R^128", fillcolor="#E6F4EA", color="#137333"];
+        SDF [label="MLP Implicit Decoder
+f_theta(x, z) -> d", fillcolor="#E6F4EA", color="#137333"];
+        ENC -> LAT -> SDF;
+    }
+
+    MC [label="Marching Cubes C++20
+Extracción de Nivel Cero
++ Normales por Gradiente", fillcolor="#FEF7E0", color="#B06000"];
+    FB [label="Fallback Físico Canónico
+(Cilindro Frenet-Serret)
+si Confianza < 50%", fillcolor="#ECEFF1", color="#78909C"];
+    MESH [label="Malla 3D de Alta Fidelidad
+Forma real (codos, aplastados)
++ Material ASTM PBR", fillcolor="#FCE8E6", color="#C5221F"];
+
+    BSCAN -> ROI -> PARCH -> ENC;
+    SDF -> MC;
+    PARCH -> FB [style=dashed, label="conf < 0.5"];
+    MC -> MESH;
+    FB -> MESH;
+}

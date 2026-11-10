@@ -1,0 +1,30 @@
+digraph R {
+  rankdir=TB; nodesep=0.25; ranksep=0.35;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9, penwidth=1.3];
+  edge [color="#5F6368", arrowhead=vee, penwidth=1.1];
+
+  S0  [label="S0  Infraestructura\nCMake, tests, CLI vacia", fillcolor="#ECEFF1", color="#607D8B"];
+  S1  [label="S1  Nucleo binario\nendian.hpp, IBM float", fillcolor="#E8F0FE", color="#1A73E8"];
+  S2  [label="S2  Tipos de dominio + simulador\ntypes.hpp, SyntheticGenerator", fillcolor="#E8F0FE", color="#1A73E8"];
+  S3  [label="S3  Geodesia\nECEF, ENU, UTM, azimut, lever-arm", fillcolor="#E8F0FE", color="#1A73E8"];
+  S4  [label="S4  GNSS\nNMEA GGA, sincronizacion de trayectoria", fillcolor="#E8F0FE", color="#1A73E8"];
+  S5  [label="S5  Lectores de radar\nRadarReader, DZT, SEG-Y, dispatch", fillcolor="#E8F0FE", color="#1A73E8"];
+  S6  [label="S6  FFT + Hilbert\nCooley-Tukey, senal analitica", fillcolor="#E6F4EA", color="#137333"];
+  S7  [label="S7  Pipeline DSP\ndewow, t0, bandpass, fondo, SEC", fillcolor="#E6F4EA", color="#137333"];
+  S8  [label="S8  Migracion + profundidad\nKirchhoff, TWT->z, nube de puntos", fillcolor="#E6F4EA", color="#137333"];
+  S9  [label="S9  Inversion geofisica\nFresnel, semblanza, atenuacion, ASTM", fillcolor="#FEF7E0", color="#B06000"];
+  S10 [label="S10 Objetos semanticos + mallas\nhorizontes, conductos, anomalias", fillcolor="#FEF7E0", color="#B06000"];
+  S11 [label="S11 Exportadores\nOBJ/MTL, GLB, GeoJSON, PLY, HTML", fillcolor="#FCE8E6", color="#C5221F"];
+  S12 [label="S12 Integracion\nCLI completa, graficos, datos reales", fillcolor="#FCE8E6", color="#C5221F"];
+
+  S0 -> S1 -> S2;
+  S2 -> S3 -> S4;
+  S1 -> S5; S2 -> S5; S4 -> S5;
+  S2 -> S6 -> S7;
+  S5 -> S7;
+  S7 -> S8; S3 -> S8;
+  S6 -> S9; S7 -> S9; S8 -> S9;
+  S8 -> S10; S9 -> S10;
+  S10 -> S11; S3 -> S11;
+  S11 -> S12; S5 -> S12;
+}

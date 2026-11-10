@@ -1,0 +1,42 @@
+digraph Arch {
+    rankdir=LR;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=9, shape=box, style="rounded,filled", penwidth=1.2];
+    edge [color="#455A64", penwidth=1.2, arrowhead="vee"];
+
+    subgraph cluster_input {
+        label = "Archivos Crudos"; fontname="Helvetica-Bold"; fontsize=10; fillcolor="#ECEFF1"; color="#90A4AE"; style="rounded,filled";
+        F1 [label="GSSI .DZT / .DZG", fillcolor="#FFFFFF", color="#607D8B"];
+        F2 [label="SEG-Y / SGY", fillcolor="#FFFFFF", color="#607D8B"];
+        F3 [label="MALA .RD3 / .RAD", fillcolor="#FFFFFF", color="#607D8B"];
+    }
+
+    subgraph cluster_io {
+        label = "Capa I/O & Core"; fontname="Helvetica-Bold"; fontsize=10; fillcolor="#E8F0FE"; color="#1A73E8"; style="rounded,filled";
+        IO [label="DztReader / SegyReader\n(Zero-copy endianness)", fillcolor="#FFFFFF", color="#1A73E8"];
+        CORE [label="Estructuras Maestras\n• AScan (Muestras + GPS)\n• BScan (Perfil 2D)", fillcolor="#FFFFFF", color="#1A73E8"];
+        GEO [label="CrsTransformer\nWGS84 -> ECEF -> ENU / UTM", fillcolor="#FFFFFF", color="#1A73E8"];
+        IO -> CORE;
+        GEO -> CORE;
+    }
+
+    subgraph cluster_dsp {
+        label = "Capa DSP & Inversión"; fontname="Helvetica-Bold"; fontsize=10; fillcolor="#E6F4EA"; color="#137333"; style="rounded,filled";
+        DSP [label="SignalProcessor\n• Dewow\n• Time-Zero\n• Butterworth (FFTW3)", fillcolor="#FFFFFF", color="#137333"];
+        HILB [label="HilbertTransformer\n• Señal Analítica z(t)\n• Envolvente |z(t)|", fillcolor="#FFFFFF", color="#137333"];
+        INV [label="SoilInverter\n• Semblanza v(x,t)\n• Inversión Fresnel R\n• MaterialDB (ASTM)", fillcolor="#FFFFFF", color="#137333"];
+        MIG [label="ObjectTransformer\n• Migración Kirchhoff\n• Frenet-Serret 3D", fillcolor="#FFFFFF", color="#137333"];
+        DSP -> HILB -> INV -> MIG;
+    }
+
+    subgraph cluster_export {
+        label = "Capa Exportación"; fontname="Helvetica-Bold"; fontsize=10; fillcolor="#FEF7E0"; color="#B06000"; style="rounded,filled";
+        GLB [label="SceneExporter3D\nKhronos glTF 2.0 .glb", fillcolor="#FFFFFF", color="#B06000"];
+        GIS [label="GeoJsonWriter\nCapa vectorial GIS 3D", fillcolor="#FFFFFF", color="#B06000"];
+        VIZ [label="FluctuationPlotter & Web\nPNG Cairo + Three.js HTML", fillcolor="#FFFFFF", color="#B06000"];
+    }
+
+    F1 -> IO; F2 -> IO; F3 -> IO;
+    CORE -> DSP;
+    MIG -> GLB; MIG -> GIS; MIG -> VIZ;
+}
