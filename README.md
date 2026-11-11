@@ -1,5 +1,25 @@
 # gpr3d (`SignalHandler`)
 
+Modulare Bibliothek in **C++20** und CLI-Tool (`gpr3d`) zum **Lesen, Aufbereiten, Interpretieren und Transformieren von Georadar-Signalen (GPR / GDR)** sowohl in **georeferenzierte 3D-Punktwolken** als auch in **semantische 3D-Netzobjekte** und **grafische Schwankungsdarstellungen**.
+
+---
+
+## Hauptmerkmale
+
+1. **Natives Lesen und Schreiben von GPR- und GNSS-Standardformaten**:
+   - **SEG-Y (`.sgy` / `.segy`)**, **GSSI RADAN (`.dzt` + `.dzg`)** und **MALA RAMAC (`.rd3` + `.rad` + `.cor`)**.
+   - GNSS-Synchronisation und -Interpolation aus `.csv`, `.cor` und NMEA-0183 (`$GPGGA` / `$GNGGA`) mit *Lever-Arm*-Korrektur.
+
+2. **Digitale Signalverarbeitung (DSP) und semantische Interpretation von 3D-Objekten**:
+   - Zweigleisige geophysikalische Pipeline: *Dewow*, *Time-Zero*-Korrektur, phasenloser Butterworth-Bandpassfilter (`FFTW3`), Hintergrundsubtraktion, SEC-Verstärkung, **2D-Kirchhoff-Migration** und analytische Hilbert-Hüllkurve.
+   - **Signal-zu-3D-Objekt-Transformator (`SignalObjectTransformer`)**:
+     - **Zylindrische Leitungen und Rohre (`ConduitObject3D`)**: Erkennung migrierter Scheitelpunkte mit automatischer Klassifizierung der elektromagnetischen Polarität (*dielektrische Leitung/Glasfaser* vs. *Metallrohr/Wasser*), 3D-Verbindung zwischen parallelen Linien und Generierung zylindrischer Rohrgitter.
+     - **Schichten / stratigraphische Horizonte (`LayerHorizonObject3D`)**: Robuste Verfolgung mittels lateralen Medianfilters und 3D-Triangulation 
+
+Übersetzt mit DeepL.com (kostenlose Version)
+
+# gpr3d (`SignalHandler`)
+
 Librería modular en **C++20** y herramienta CLI (`gpr3d`) para **leer, acondicionar, interpretar y transformar señales de Georradar (GPR / GDR)** tanto a **nubes de puntos 3D georreferenciadas** como a **objetos semánticos 3D mallados** y **visualizaciones de fluctuaciones gráficas**.
 
 ---
